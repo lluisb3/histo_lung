@@ -6,7 +6,7 @@ from utils import csv_writer
 
 thispath = Path(__file__).resolve()
 
-datadir =Path(thispath.parent.parent / "data")
+datadir = Path(thispath.parent.parent / "data")
 
 
 # Opening JSON file
@@ -20,8 +20,7 @@ he_json = []
 for file in json_files:
     f = open(file)
     data =json.load(f)
-    keys = np.fromiter(data.keys(), dtype='U14')
-    matches = [i for i in keys if i in clean_he_csv]
+    matches = [i for i in data.keys() if i.split("_")[0] in clean_he_csv]
     he_json.extend(matches)
     f.close()
 
@@ -35,7 +34,27 @@ if len(he_json) > len(clean_he_csv):
     for a, num in zip(m, he_json):
         if a == False:
             csv_writer(datadir, "repeated_in_json.csv", "a", [num])
-    print(a)
+    print(f"Found repeated values in JSON files. Saved in .csv file in {datadir}")
 
-# Eliminate images repeated between JSON files
-he_json = np.unique(he_json)
+else:
+    print("Not repeated values found on the JSON files")
+
+    # Eliminate images repeated between JSON files
+    he_json = np.unique(he_json)
+
+    # Obtain levels from JSON files from images contained in the he_images.csv
+    labels_he = {}
+    for file in json_files:
+        f = open(file)
+        data =json.load(f)
+        for num, labels in zip(data, data.values()):
+            if num in he_json:
+                labels_he[num] = labels
+                    
+        f.close()
+
+
+    labels_df = pd.DataFrame.from_dict(labels_he, orient="index") 
+    labels_df.to_csv(Path(datadir / "labels.csv"), header=True, index_label="image_num")
+
+    print(f"Labels from JSON files created in {datadir} for HE ink")
