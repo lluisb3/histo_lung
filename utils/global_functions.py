@@ -2,7 +2,6 @@ import csv
 
 def csv_writer(file_path, name, action, data):
     """
-
     Parameters
     ----------
     file_path (Path from pathlib): path where to save the csv file
@@ -18,3 +17,4 @@ def csv_writer(file_path, name, action, data):
         writer = csv.writer(f)
         writer.writerow(data)
         f.close()
+        
