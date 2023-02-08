@@ -5,6 +5,7 @@ scripts_niccolo
 HistoQC
 csv_files_nonimportant
 PyHIST
+bat_files/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
