@@ -1,6 +1,10 @@
 # Big files
 data/*
 trash.py
+scripts_niccolo
+HistoQC
+csv_files_nonimportant
+PyHIST
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
