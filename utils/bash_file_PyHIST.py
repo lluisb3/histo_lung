@@ -12,17 +12,11 @@ def bash_file(name_experiment):
     a set of landmarks using the transformation used to perform the registration using transformix command.
     Parameters
     ----------
-    name_experiment: Name of the experiment to save transformix results and get results coming from elastix
-    registration.
-    parameter: Name of the folder with the parameters in elastix/parameters
-    dataset_option: set to train if you use any dataset of train images (train, train_Normalized_CLAHE, etc), set to
-    test if you use any test dataset.
+    name_experiment: Name of the bash file
 
     Returns
     -------
-    A .txt file in elastix/bat_files with name transformix_name_experiment to run in the console the transformix
-    transformation of a set of landmarks. The new landmarks results are saved in the path
-    elastix/Outputs_experiments_transformix/name_experiment
+    A .sh bash file to perform the preprocessing with PyHIST
     """
     Path(thispath.parent.parent / f'bat_files').mkdir(exist_ok=True, parents=True)
 
@@ -59,10 +53,7 @@ def bash_file(name_experiment):
     default="Example",
     prompt="Name of the bash file",
     help=
-    "Chose to create an elastix or transformix system file. If elastix the following parameters are needed:"
-    "name_experiment, parameter, dataset_option and optionally mask and mask_name"
-    "If transformix the following parameters are meeded:"
-    "name_experiment, parameters, dataset_option",
+    "Choose name for the bash_file",
 )
 def main(name):
         bash_file(name)
