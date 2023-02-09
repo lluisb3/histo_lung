@@ -55,16 +55,17 @@ def bash_file(name_experiment):
 
 @click.command()
 @click.option(
-    "--name_experiment",
+    "--name",
     default="Example",
+    prompt="Name of the bash file",
     help=
     "Chose to create an elastix or transformix system file. If elastix the following parameters are needed:"
     "name_experiment, parameter, dataset_option and optionally mask and mask_name"
     "If transformix the following parameters are meeded:"
     "name_experiment, parameters, dataset_option",
 )
-def main(name_experiment):
-        bash_file(name_experiment)
+def main(name):
+        bash_file(name)
 
 
 if __name__ == "__main__":
