@@ -17,4 +17,17 @@ def csv_writer(file_path, name, action, data):
         writer = csv.writer(f)
         writer.writerow(data)
         f.close()
-        
+
+
+def available_magnifications(mpp, level_downsamples):
+	mpp = float(mpp)
+	if (mpp<0.26):
+		magnification = 40
+	else:
+		magnification = 20
+	
+	mags = []
+	for l in level_downsamples:
+		mags.append(magnification/l)
+	
+	return mags
