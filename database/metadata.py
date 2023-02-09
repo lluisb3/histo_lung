@@ -55,6 +55,13 @@ else:
 
 
     labels_df = pd.DataFrame.from_dict(labels_he, orient="index") 
+    for col, row in labels_df.iterrows():
+        for name in he_csv:
+            if col.split("_")[0] in name:
+                labels_df.rename(index={col: name}, inplace=True)
     labels_df.to_csv(Path(datadir / "labels.csv"), header=True, index_label="image_num")
 
+
+
     print(f"Labels from JSON files created in {datadir} for HE ink")
+

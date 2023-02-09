@@ -1,5 +1,6 @@
 import click 
 from pathlib import Path
+import pandas as pd
 
 thispath = Path(__file__).resolve()
 
@@ -28,6 +29,15 @@ def bash_file(name_experiment):
     datadir = Path("/mnt/nas4/datasets/ToReadme/ExaMode_Dataset1/AOEC")
 
     svs_files = [i for i in datadir.rglob("*.svs") if "LungAOEC" in str(i)]
+
+    labels = pd.read_csv(Path(thispath.parent / "data" / "lung_data" / "he_images.csv"))
+    names = labels["file_name"].values
+
+    he_svs_files = []
+    for name in names:
+        for file in svs_files:
+            if file.stem in name:
+                he_svs_files.append(file)
 
     with open(
             Path(thispath.parent.parent / Path(
