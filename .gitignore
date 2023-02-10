@@ -3,8 +3,9 @@ data/*
 trash.py
 scripts_niccolo
 HistoQC
-csv_files_nonimportant
+csv_files_extra
 PyHIST
+CLAM
 bat_files/*
 
 # Byte-compiled / optimized / DLL files

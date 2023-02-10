@@ -34,7 +34,8 @@ if len(he_json) > len(clean_he_csv):
     for a, num in zip(m, he_json):
         if a == False:
             csv_writer(datadir, "repeated_in_json.csv", "a", [num])
-    print(f"Found repeated values in JSON files. Saved in .csv file in {datadir}")
+    outputdir = Path(datadir.parent / "csv_files_extra")
+    print(f"Found repeated values in JSON files. Saved in .csv file in {datadir.parent}")
 
 else:
     print("Not repeated values found on the JSON files")
