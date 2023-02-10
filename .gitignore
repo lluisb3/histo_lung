@@ -6,7 +6,7 @@ HistoQC
 csv_files_extra
 PyHIST
 CLAM
-bat_files/*
+bash_files/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
