@@ -203,7 +203,7 @@ def analyze_file(filename, patch_size, PATH_INPUT_MASKS, MAGNIFICATION, PATH_OUT
 
 	patches = []
 	
-	file = openslide.OpenSlide(filename)
+	file = openslide.OpenSlide(str(filename))
 	mpp = file.properties['openslide.mpp-x']
 
 	level_downsamples = file.level_downsamples
@@ -214,8 +214,7 @@ def analyze_file(filename, patch_size, PATH_INPUT_MASKS, MAGNIFICATION, PATH_OUT
 		#load mask
 	fname = os.path.split(filename)[-1]
 		#check if exists
-	fname_mask = PATH_INPUT_MASKS+fname+'/'+fname+'_mask_use.png' 
-
+	fname_mask = Path(PATH_INPUT_MASKS / filename.parent.stem / filename.stem)
 
 	array_dict = []
 
@@ -247,29 +246,13 @@ def analyze_file(filename, patch_size, PATH_INPUT_MASKS, MAGNIFICATION, PATH_OUT
 	TILE_SIZE_MASK = GLIMPSE_SIZE_MASK+STRIDE_SIZE_MASK
 
 	PIXEL_THRESH = 0.5
-
-	fname_out = PATH_OUTPUT+'/'+fname+'/'+fname+'_coords_densely.csv'
-	flag_csv = False
-
-	try:
-		local_csv = pd.read_csv(fname_out, sep=',', header=None).values
-
-		if(len(local_csv)>0):
-			flag_csv = True
-
-	except:
-		pass
-	#print(fname_out)
-
-	#if (os.path.isfile(fname_mask) and os.path.exists(fname_out)==False):
-	if (os.path.isfile(fname_mask) and flag_csv==False):
-	#if (os.path.isfile(fname_mask)):
-			#creates directory
-		output_dir = Path(PATH_OUTPUT / fname)
+	
+	if os.path.isfile(fname_mask):
+        output_dir = Path(PATH_OUTPUT / fname)
         Path(output_dir).mkdir(exist_ok=True, parents=True)
 
 			#create CSV file structure (local)
-        filename_list = []
+		filename_list = []
 		level_list = []
 		x_list = []
 		y_list = []
