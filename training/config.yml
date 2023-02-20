@@ -1,0 +1,37 @@
+experiment_name: multiclass_resnet_nofreeze_multisteplr01_seg
+model:
+    model_name: 'resnet'
+    num_classes: 3
+    freeze_weights: False
+    num_frozen_layers: 7
+    dropout: 0.2
+
+dataset:
+    challenge_name: MulticlassClassification
+    mean: [155.3132, 128.6486, 127.0073]
+    stddev: [64.1200, 58.4539, 60.8631]
+    use_masks: True
+
+dataloaders:
+    train_batch_size: 64
+    val_batch_size: 128
+    num_workers: 4
+
+data_aug:
+    prob: 0.3
+
+training:
+    criterion: 'CrossEntropyLoss'
+    criterion_args:
+        weight: [0.46615505706414795, 0.607831562377017,0.9260133805588351]
+    optimizer: 'SGD'
+    optimizer_args:
+        lr: 0.01
+        momentum: 0.9
+    lr_scheduler: 'MultiStepLR'
+    lr_scheduler_args:
+        milestones: [10,25,30,45]
+        gamma: 0.1
+    n_epochs: 50
+    best_metric: 'kappa'
+    resume_training: False
