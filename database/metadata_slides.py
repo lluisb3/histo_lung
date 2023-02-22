@@ -33,13 +33,15 @@ def metadata_csv():
     metadata = pd.DataFrame(columns=header)
 
     for svs_file in tqdm(he_svs_files, desc="Metadata .csv file in progress"):
+
         patchdir = Path(maskdir / svs_file.parent.stem / svs_file.stem / f"{svs_file.stem}_tiles")
+        
         number_patches = len(os.listdir(patchdir))
+        
         patch = cv.imread(str(Path(patchdir / os.listdir(patchdir)[0] )))
         patch_shape = patch.shape
-        print(patch_shape)
+        
         center = svs_file.parent.stem.split("_")[0]
-        print(center)
 
         slide = openslide.OpenSlide(str(svs_file))
 
@@ -47,6 +49,7 @@ def metadata_csv():
         mpp = slide.properties['openslide.mpp-x']
         level_downsamples = slide.level_downsamples
         mags = available_magnifications(mpp, level_downsamples)
+        
         metadata.loc[svs_file.stem] = [level_dimensions, level_downsamples, mags,
                                        mpp, number_patches, patch_shape, center]
 
