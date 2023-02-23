@@ -10,9 +10,9 @@ thispath = Path(__file__).resolve()
 
 def binary_mask_pyhist():
 
-    maskdir = Path(thispath.parent.parent / "data" / "Mask_PyHIST")
+    maskdir = Path(thispath.parent.parent / "data" / "Mask_PyHIST_v2")
 
-    colorful_masks = [i for i in maskdir.rglob("*.ppm")]
+    colorful_masks = [i for i in maskdir.rglob("*.ppm") if "000030734200335038" in str(i)]
 
     for mask in tqdm(colorful_masks, desc=f"Saving binary masks in Mask_PyHIST"):
 
