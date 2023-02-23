@@ -38,14 +38,14 @@ def metadata_csv():
     metadata = pd.DataFrame(columns=header)
 
     for svs_file in tqdm(he_svs_files, desc="Metadata .csv file in progress"):
-
+        print(svs_file)
         patchdir = Path(maskdir / svs_file.parent.stem / svs_file.stem / f"{svs_file.stem}_tiles")
-        binary_path = Path(maskdir / svs_file.parent.stem / svs_file.stem / f"binary_{svs_file.stem}.png")
+        resultdir = Path(maskdir / svs_file.parent.stem / svs_file.stem)
 
         number_patches = len(os.listdir(patchdir))
-            
-        patch = cv.imread(str(Path(patchdir / os.listdir(patchdir)[0] )))
-        patch_shape = patch.shape
+        
+        patches_metadata = pd.read_csv(Path(resultdir / "tile_selection.tsv"), sep='\t').set_index("Tile")
+        patch_shape = patches_metadata.iloc[0]["Width"]
         
         center = svs_file.parent.stem.split("_")[0]
 
@@ -56,7 +56,7 @@ def metadata_csv():
         level_downsamples = slide.level_downsamples
         mags = available_magnifications(mpp, level_downsamples)
 
-        binary_mask = cv.imread(str(binary_path))
+        binary_mask = cv.imread(str(resultdir / f"binary_{svs_file.stem}.png"))
         binary_mask[binary_mask == 255] = 1
         mask_shape = binary_mask.shape
         binary_mask = cv.resize(binary_mask, (int(mask_shape[1]*0.5), int(mask_shape[0]*0.5)))
