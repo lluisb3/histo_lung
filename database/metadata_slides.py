@@ -10,7 +10,7 @@ from utils import available_magnifications
 
 thispath = Path(__file__).resolve()
 
-def metadata_csv():
+def metadata_slides_csv():
     datadir = Path("/mnt/nas4/datasets/ToReadme/ExaMode_Dataset1/AOEC")
     maskdir = Path(thispath.parent.parent / "data" / "Mask_PyHIST")
 
@@ -38,7 +38,7 @@ def metadata_csv():
     metadata = pd.DataFrame(columns=header)
 
     for svs_file in tqdm(he_svs_files, desc="Metadata .csv file in progress"):
-        print(svs_file)
+        print(f"== {svs_file.stem} ==")
         patchdir = Path(maskdir / svs_file.parent.stem / svs_file.stem / f"{svs_file.stem}_tiles")
         resultdir = Path(maskdir / svs_file.parent.stem / svs_file.stem)
 
@@ -81,7 +81,7 @@ def metadata_csv():
 
 
 def main():
-    metadata_csv()
+    metadata_slides_csv()
 
 
 if __name__ == "__main__":
