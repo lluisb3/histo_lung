@@ -12,7 +12,15 @@ def set_parameter_requires_grad(model, number_frozen_layers, feature_layers=8):
     return model
 
 
-def model_option(model_name: str, num_classes: int, freeze=False, num_freezed_layers=0, seg_mask=False, dropout=0.0):
+
+
+
+def model_option(model_name: str,
+                 num_classes: int,
+                 freeze=False,
+                 num_freezed_layers=0,
+                 seg_mask=False,
+                 dropout=0.0):
     """
 
     Parameters
@@ -42,8 +50,7 @@ def model_option(model_name: str, num_classes: int, freeze=False, num_freezed_la
     net = None
     resize_param = 0
     if model_name.lower() == "resnet":
-        """ ResNet50 
-          """
+        """ ResNet50 """
         net = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
         if seg_mask:
             #   Modifying the input layer to receive 4-channel image instead of 3-channel image,
@@ -64,20 +71,19 @@ def model_option(model_name: str, num_classes: int, freeze=False, num_freezed_la
             else:
                 net = set_parameter_requires_grad(net, num_freezed_layers)
 
-        num_ftrs = net.fc.in_features  # 2048
+        input_features = net.fc.in_features  # 2048
         net.fc = nn.Sequential(nn.Dropout(p=dropout),
-                               nn.Linear(num_ftrs, num_ftrs // 4),
+                               nn.Linear(input_features, input_features // 4),
                                nn.ReLU(inplace=True),
                                nn.Dropout(p=dropout),
-                               nn.Linear(num_ftrs // 4, num_ftrs // 8),
+                               nn.Linear(input_features // 4, input_features // 8),
                                nn.ReLU(inplace=True),
                                nn.Dropout(p=dropout),
-                               nn.Linear(num_ftrs // 8, num_classes))
+                               nn.Linear(input_features // 8, num_classes))
         resize_param = 224
 
     elif model_name.lower() == "convnext":
-        """ ConvNeXt small
-          """
+        """ ConvNeXt small """
         net = models.convnext_small(weights='DEFAULT')
         if seg_mask:
             #   Modifying the input layer to receive 4-channel image instead of 3-channel image,
@@ -92,20 +98,19 @@ def model_option(model_name: str, num_classes: int, freeze=False, num_freezed_la
         if freeze:
             # Freezing the number of layers
             net.features = set_parameter_requires_grad(net.features, num_freezed_layers)
-        num_ftrs = net.classifier[2].in_features  # 768
+        input_features = net.classifier[2].in_features  # 768
         net.classifier[2] = nn.Sequential(nn.Dropout(p=dropout),
-                                          nn.Linear(num_ftrs, num_ftrs // 2),
+                                          nn.Linear(input_features, input_features // 2),
                                           nn.ReLU(inplace=True),
                                           nn.Dropout(p=dropout),
-                                          nn.Linear(num_ftrs // 2, num_ftrs // 4),
+                                          nn.Linear(input_features // 2, input_features // 4),
                                           nn.ReLU(inplace=True),
                                           nn.Dropout(p=dropout),
-                                          nn.Linear(num_ftrs // 4, num_classes))
+                                          nn.Linear(input_features // 4, num_classes))
         resize_param = 224
 
     elif model_name.lower() == "swin":
-        """ Swin Transformer V2 -T
-        """
+        """ Swin Transformer V2 -T """
         net = models.swin_v2_t(weights=models.Swin_V2_T_Weights.DEFAULT)
         if seg_mask:
             #   Modifying the input layer to receive 4-channel image instead of 3-channel image,
@@ -120,15 +125,15 @@ def model_option(model_name: str, num_classes: int, freeze=False, num_freezed_la
         if freeze:
             # Freezing the number of layers
             net.features = set_parameter_requires_grad(net.features, num_freezed_layers)
-        num_ftrs = net.head.in_features  # 768
+        input_features = net.head.in_features  # 768
         net.head = nn.Sequential(nn.Dropout(p=dropout),
-                                 nn.Linear(num_ftrs, num_ftrs // 2),
+                                 nn.Linear(input_features, input_features // 2),
                                  nn.ReLU(inplace=True),
                                  nn.Dropout(p=dropout),
-                                 nn.Linear(num_ftrs // 2, num_ftrs // 4),
+                                 nn.Linear(input_features // 2, input_features // 4),
                                  nn.ReLU(inplace=True),
                                  nn.Dropout(p=dropout),
-                                 nn.Linear(num_ftrs // 4, num_classes))
+                                 nn.Linear(input_features // 4, num_classes))
         resize_param = 224
 
     elif model_name.lower() == "efficient":
@@ -144,15 +149,15 @@ def model_option(model_name: str, num_classes: int, freeze=False, num_freezed_la
         if freeze:
             # Freezing the number of layers
             net.features = set_parameter_requires_grad(net.features, num_freezed_layers, feature_layers=9)
-        num_ftrs = net.classifier[1].in_features  # 1200
+        input_features = net.classifier[1].in_features  # 1200
         net.classifier = nn.Sequential(nn.Dropout(p=dropout),
-                                       nn.Linear(num_ftrs, num_ftrs // 2),
+                                       nn.Linear(input_features, input_features // 2),
                                        nn.ReLU(inplace=True),
                                        nn.Dropout(p=dropout),
-                                       nn.Linear(num_ftrs // 2, num_ftrs // 4),
+                                       nn.Linear(input_features // 2, input_features // 4),
                                        nn.ReLU(inplace=True),
                                        nn.Dropout(p=dropout),
-                                       nn.Linear(num_ftrs // 4, num_classes))
+                                       nn.Linear(input_features // 4, num_classes))
         resize_param = 224
 
     else:
