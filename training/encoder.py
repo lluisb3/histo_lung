@@ -2,7 +2,7 @@ import torch
 
 
 class Encoder(torch.nn.Module):
-	def __init__(self, model, num_classes, dim):
+	def __init__(self, model, dim):
 		"""
 		In the constructor we instantiate two nn.Linear modules and assign them as
 		member variables.
@@ -25,9 +25,9 @@ class Encoder(torch.nn.Module):
 			self.conv_layers = torch.nn.DataParallel(self.conv_layers)
 
 		self.fc_input_features = model.input_features
-		self.num_classes = num_classes
+		self.num_classes = model.num_classes
 		
-		self.dim = dim
+		self.dim = dim # feature dimension
 
 		if (EMBEDDING_bool==True):
 
@@ -68,7 +68,6 @@ class Encoder(torch.nn.Module):
 		relu = torch.nn.ReLU()
 		tanh = torch.nn.Tanh()
 		
-
 		if x is not None:
 			#print(x.shape)
 			conv_layers_out=self.conv_layers(x)
