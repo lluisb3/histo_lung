@@ -10,9 +10,10 @@ from utils import available_magnifications
 
 thispath = Path(__file__).resolve()
 
+
 def metadata_slides_csv():
     datadir = Path("/mnt/nas4/datasets/ToReadme/ExaMode_Dataset1/AOEC")
-    maskdir = Path(thispath.parent.parent / "data" / "Mask_PyHIST")
+    maskdir = Path(thispath.parent.parent / "data" / "Mask_PyHIST_v2")
 
     svs_files = natsorted([i for i in datadir.rglob("*.svs") if "LungAOEC" in str(i)], key=str)
 
@@ -59,7 +60,7 @@ def metadata_slides_csv():
         binary_mask = cv.imread(str(resultdir / f"binary_{svs_file.stem}.png"))
         binary_mask[binary_mask == 255] = 1
         mask_shape = binary_mask.shape
-        binary_mask = cv.resize(binary_mask, (int(mask_shape[1]*0.5), int(mask_shape[0]*0.5)))
+        binary_mask = cv.resize(binary_mask, (int(mask_shape[1]*0.25), int(mask_shape[0]*0.25)))
         mask_shape = binary_mask.shape
 
         thumbnail = slide.get_thumbnail((mask_shape[1], mask_shape[0]))

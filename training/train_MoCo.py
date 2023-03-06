@@ -18,7 +18,7 @@ np.random.seed(seed)
 
 
 def main():
-    
+
     print(f"CUDA current device {torch.cuda.current_device()}")
     print(f"CUDA devices available {torch.cuda.device_count()}")
 

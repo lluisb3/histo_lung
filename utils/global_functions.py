@@ -48,23 +48,25 @@ def check_corners(img):
     """
     cropped_image = img.copy()
     width, height, _ = cropped_image.shape
-    cropped_image = cropped_image[100:width-100, 100:height-1]
+    cropped_image = cropped_image[250:width-250, 250:height-1]
     width, height, _ = cropped_image.shape
     top_left = img[0, 0, :]
     top_right = img[width-1, 0, :]
     bottom_left = img[0, height-1, :]
     bottom_right = img[width-1, height-1, :]
-    most_frequent = np.argmax(np.bincount([np.sum(top_left), np.sum(top_right), np.sum(bottom_left), np.sum(bottom_right)]))
+    most_frequent = np.argmax(np.bincount([np.sum(top_left),
+                                           np.sum(top_right),
+                                           np.sum(bottom_left),
+                                           np.sum(bottom_right)]))
 
     if most_frequent == np.sum(top_left):
         return top_left
-    
+
     elif most_frequent == np.sum(top_right):
         return top_right
 
     elif most_frequent == np.sum(bottom_left):
         return bottom_left
-    
+
     elif most_frequent == np.sum(bottom_right):
         return bottom_right
-    

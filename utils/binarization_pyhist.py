@@ -12,7 +12,7 @@ def binary_mask_pyhist():
 
     maskdir = Path(thispath.parent.parent / "data" / "Mask_PyHIST_v2")
 
-    colorful_masks = [i for i in maskdir.rglob("*.ppm") if "000030734200335038" in str(i)]
+    colorful_masks = [i for i in maskdir.rglob("*.ppm")]
 
     for mask in tqdm(colorful_masks, desc=f"Saving binary masks in Mask_PyHIST"):
 
@@ -28,9 +28,9 @@ def binary_mask_pyhist():
 
         cv.imwrite(f"{maskdir}/{mask.parent.parent.stem}/{mask.parent.stem}/binary_{mask.parent.stem}.png",
                    binary_mask, [cv.IMWRITE_PNG_BILEVEL, 1])
-        
+
     print(f"Binary masks created from PyHIST and saved in {maskdir}")
-		
+
 
 def main():
     binary_mask_pyhist()
