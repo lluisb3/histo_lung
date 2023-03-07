@@ -1,6 +1,7 @@
 import csv
 import numpy as np
 
+
 def csv_writer(file_path, name, action, data):
     """
     Parameters
@@ -21,17 +22,17 @@ def csv_writer(file_path, name, action, data):
 
 
 def available_magnifications(mpp, level_downsamples):
-	mpp = float(mpp)
-	if (mpp<0.26):
-		magnification = 40
-	else:
-		magnification = 20
-	
-	mags = []
-	for l in level_downsamples:
-		mags.append(magnification/l)
-	
-	return mags
+    mpp = float(mpp)
+    if (mpp<0.26):
+        magnification = 40
+    else:
+        magnification = 20
+
+    mags = []
+    for level in level_downsamples:
+        mags.append(magnification/level)
+
+    return mags
 
 
 def check_corners(img):
@@ -46,9 +47,12 @@ def check_corners(img):
     -------
     background_pixel (numpy.ndarray): pixel value (BGR) for the background
     """
-    cropped_image = img.copy()
-    width, height, _ = cropped_image.shape
-    cropped_image = cropped_image[250:width-250, 250:height-1]
+    copy = img.copy()
+    width, height, _ = copy.shape
+    if width > 15000 or height > 15000:
+        cropped_image = copy[600:width-600, 600:height-600]
+    else:
+        cropped_image = copy[300:width-300, 300:height-300]
     width, height, _ = cropped_image.shape
     top_left = img[0, 0, :]
     top_right = img[width-1, 0, :]

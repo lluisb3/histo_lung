@@ -60,7 +60,7 @@ def metadata_slides_csv():
         binary_mask = cv.imread(str(resultdir / f"binary_{svs_file.stem}.png"))
         binary_mask[binary_mask == 255] = 1
         mask_shape = binary_mask.shape
-        binary_mask = cv.resize(binary_mask, (int(mask_shape[1]*0.25), int(mask_shape[0]*0.25)))
+        binary_mask = cv.resize(binary_mask, (int(mask_shape[1]*0.5), int(mask_shape[0]*0.5)))
         mask_shape = binary_mask.shape
 
         thumbnail = slide.get_thumbnail((mask_shape[1], mask_shape[0]))
