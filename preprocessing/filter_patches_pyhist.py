@@ -70,14 +70,16 @@ def filter_patches(list_dirs, maskdir):
         # Create .csv with metadata information of the filtered patches
         outputdir_metadata = Path(filename / f"{filename.stem}_densely_filtered_metadata.csv")
         
-        File_metadata = {'patch_name':names,'row':all_row,'column':all_col}
-        df_metadata = pd.DataFrame.from_dict(File_metadata)
+        file_metadata = {'patch_name':names,'row':all_row,'column':all_col}
+        df_metadata = pd.DataFrame.from_dict(file_metadata)
+        df_metadata.sort_values(by='patch_name', axis=0, ascending=True, inplace=True)
         df_metadata.to_csv(outputdir_metadata, index=False)
 
         # Create .csv with filtered parches path
         outputdir_paths = Path(filename / f"{filename.stem}_densely_filtered_paths.csv")
-        File = {'filtered_patch_path': filtered_patches}
-        df_paths = pd.DataFrame.from_dict(File)
+        file_path = {'filtered_patch_path': filtered_patches}
+        df_paths = pd.DataFrame.from_dict(file_path)
+        df_paths.sort_values(by='filtered_patch_path', axis=0, ascending=True, inplace=True)
         df_paths.to_csv(outputdir_paths, index=False)
 
         print(f"Filtered patches: {len(filtered_patches)} from a total of {len(patches_path)}")
@@ -90,7 +92,7 @@ def main():
     
     np.random.seed(0)
     
-    maskdir  = Path(thispath.parent.parent / "data" / "Mask_PyHIST")
+    maskdir  = Path(thispath.parent.parent / "data" / "Mask_PyHIST_v2")
 
     subdirs = natsorted([e for e in maskdir.iterdir() if e.is_dir()])
     listdir_pyhist = []

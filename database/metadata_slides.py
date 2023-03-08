@@ -37,9 +37,9 @@ def metadata_slides_csv():
               "number_patches_pyhist", "patch_shape", "center", "mean", "std", "mask_shape_stadistics"]
 
     metadata = pd.DataFrame(columns=header)
+    metadata.index.name="ID wsi"
 
     for svs_file in tqdm(he_svs_files, desc="Metadata .csv file in progress"):
-        print(f"== {svs_file.stem} ==")
         patchdir = Path(maskdir / svs_file.parent.stem / svs_file.stem / f"{svs_file.stem}_tiles")
         resultdir = Path(maskdir / svs_file.parent.stem / svs_file.stem)
 
@@ -77,6 +77,7 @@ def metadata_slides_csv():
                                        mpp, number_patches, patch_shape, center,
                                        mean_thumb_data, std_thumb_data, mask_shape]
 
+    metadata.sort_index(axis=0 ,ascending=True, inplace=True)
     metadata.to_csv(f"{maskdir.parent}/metadata_slides.csv")
     print(f"metadata_slides.csv created in {maskdir.parent}")
 
