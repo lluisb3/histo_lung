@@ -33,21 +33,21 @@ def metadata_slides_csv():
 
     print(f"Number of svs files for the metadata: {len(he_svs_files)}")
 
-    header = ["level_dimensions", "level_downsamples", "magnifications", "mpp",
-              "number_patches_pyhist", "patch_shape", "center", "mean", "std", "mask_shape_stadistics"]
+    header = ["level_dimensions", "level_downsamples", "magnifications", "mpp", "number_patches",
+              "number_filtered_patches", "patch_shape", "center", "mean", "std", "mask_shape_stadistics"]
 
     metadata = pd.DataFrame(columns=header)
-    metadata.index.name="ID wsi"
+    metadata.index.name = "ID wsi"
 
     for svs_file in tqdm(he_svs_files, desc="Metadata .csv file in progress"):
         patchdir = Path(maskdir / svs_file.parent.stem / svs_file.stem / f"{svs_file.stem}_tiles")
         resultdir = Path(maskdir / svs_file.parent.stem / svs_file.stem)
 
         number_patches = len(os.listdir(patchdir))
-        
+
         patches_metadata = pd.read_csv(Path(resultdir / "tile_selection.tsv"), sep='\t').set_index("Tile")
         patch_shape = patches_metadata.iloc[0]["Width"]
-        
+
         center = svs_file.parent.stem.split("_")[0]
 
         slide = openslide.OpenSlide(str(svs_file))
@@ -72,14 +72,18 @@ def metadata_slides_csv():
         thumb_data_masked = np.ma.array(thumbnail_data, mask=np.logical_not(binary_mask))
         mean_thumb_data = np.mean(thumb_data_masked, axis=(0, 1))
         std_thumb_data = np.std(thumb_data_masked, axis=(0, 1))
-        
-        metadata.loc[svs_file.stem] = [level_dimensions, level_downsamples, mags,
-                                       mpp, number_patches, patch_shape, center,
-                                       mean_thumb_data, std_thumb_data, mask_shape]
 
-    metadata.sort_index(axis=0 ,ascending=True, inplace=True)
-    metadata.to_csv(f"{maskdir.parent}/metadata_slides.csv")
-    print(f"metadata_slides.csv created in {maskdir.parent}")
+        df_csv = pd.read_csv(Path(resultdir / f"{svs_file.stem}_densely_filtered_metadata.csv"))
+        filtered_patches = df_csv["patch_name"].count()
+
+        metadata.loc[svs_file.stem] = [level_dimensions, level_downsamples, mags,
+                                       mpp, number_patches, filtered_patches,
+                                       patch_shape, center, mean_thumb_data,
+                                       std_thumb_data, mask_shape]
+
+    metadata.sort_index(axis=0, ascending=True, inplace=True)
+    metadata.to_csv(Path(maskdir / "metadata_slides.csv"))
+    print(f"metadata_slides.csv created in {maskdir}")
 
 
 def main():

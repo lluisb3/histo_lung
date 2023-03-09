@@ -62,6 +62,7 @@ def labels_from_json_he():
             for name in he_csv:
                 if col.split("_")[0] in name:
                     labels_df.rename(index={col: name}, inplace=True)
+        labels_df.drop("cancer_nscc_large", inplace=True, axis=1)
         labels_df.to_csv(Path(datadir / "labels.csv"), header=True, index_label="image_num")
 
 
