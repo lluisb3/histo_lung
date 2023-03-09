@@ -89,10 +89,10 @@ def filter_patches(list_dirs, maskdir):
 def main():
 
     start_time = time.time()
-    
+
     np.random.seed(0)
-    
-    maskdir  = Path(thispath.parent.parent / "data" / "Mask_PyHIST_v2")
+
+    maskdir = Path(thispath.parent.parent / "data" / "Mask_PyHIST_v2")
 
     subdirs = natsorted([e for e in maskdir.iterdir() if e.is_dir()])
     listdir_pyhist = []
