@@ -9,7 +9,7 @@ thispath = Path(__file__).resolve()
 
 def data_splits(k):
 
-    datadir = Path(thispath.parent / "data")
+    datadir = Path(thispath.parent.parent / "data")
 
     csv_dataset_AOEC = Path(datadir / "labels.csv")
 
@@ -29,7 +29,8 @@ def data_splits(k):
     for train_index, test_index in mskf.split(images, labels):
         images_train, images_test = images[train_index], images[test_index]
         labels_train, labels_test = labels[train_index], labels[test_index]
-        folds.loc[i] = [images_train, images_test, labels_train, labels_test]
+        folds.loc[i] = [list(images_train), list(images_test),
+                        list(labels_train), list(labels_test)]
         i += 1
 
     print(f"Datasplit labels TRAIN: {np.sum(labels_train, axis=0)}"
@@ -48,7 +49,7 @@ def data_splits(k):
     help="Specify number of splits to perform k-fold-crossvalidation",
 )
 def main(k):
-    data_splits(k)
+    data_splits(int(k))
 
 
 if __name__ == "__main__":
