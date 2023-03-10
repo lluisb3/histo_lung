@@ -41,8 +41,8 @@ def main():
     #checkpoint dir where put csv with loss function, metrics evaluation, setup
     Path(outputdir / "checkpoints_MIL").mkdir(exist_ok=True, parents=True)
 
-    model_weights_filename = outputdir +'MoCo.pt'
-    model_weights_temporary_filename = outputdir +'MoCo_temporary.pt'
+    model_weights_filename = outputdir + 'MoCo.pt'
+    model_weights_temporary_filename = outputdir + 'MoCo_temporary.pt'
 
     net, resize_param = model_option(model_arguments['model_name'],
                                      model_arguments['num_classes'],
