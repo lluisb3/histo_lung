@@ -29,8 +29,8 @@ def data_splits(k):
     for train_index, test_index in mskf.split(images, labels):
         images_train, images_test = images[train_index], images[test_index]
         labels_train, labels_test = labels[train_index], labels[test_index]
-        folds.loc[i] = [list(images_train), list(images_test),
-                        list(labels_train), list(labels_test)]
+        folds.loc[i] = [images_train.tolist(), images_test.tolist(),
+                        labels_train.tolist(), labels_test.tolist()]
         i += 1
 
     print(f"Datasplit labels TRAIN: {np.sum(labels_train, axis=0)}"
