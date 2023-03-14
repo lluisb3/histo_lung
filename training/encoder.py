@@ -2,7 +2,7 @@ import torch
 
 
 class Encoder(torch.nn.Module):
-    def __init__(self, model, dim):
+    def __init__(self, model, model_arguments, dim):
         """
         In the constructor we instantiate two nn.Linear modules and assign them as
         member variables.
@@ -10,40 +10,27 @@ class Encoder(torch.nn.Module):
 
         super(Encoder, self).__init__()
 
-        # pre_trained_network = torch.hub.load('pytorch/vision:v0.10.0', model, pretrained=True)
-
-        # if (('resnet' in model) or ('resnext' in model)):
-        # 	fc_input_features = model.fc.in_features
-        # elif (('densenet' in model)):
-        # 	fc_input_features = model.classifier.in_features
-        # elif ('mobilenet' in model):
-        # 	fc_input_features = model.classifier[1].in_features
-
-        self.conv_layers = torch.nn.Sequential(*list(model.children())[:-1])
-
-        if (torch.cuda.device_count() > 1):
-            self.conv_layers = torch.nn.DataParallel(self.conv_layers)
-
         self.fc_input_features = model.input_features
         self.num_classes = model.num_classes
 
         self.dim = dim  # feature dimension
+        self.model_arguments = model_arguments
 
-        if (EMBEDDING_bool == True):
+        if self.model_arguments["embedding_bool"]:
 
-            if ('resnet34' in model):
+            if ('resnet34' in self.model_arguments['model_name']):
                 self.E = self.dim
                 self.L = self.E
                 self.D = 64
                 self.K = self.num_classes
 
-            elif ('resnet50' in model):
+            elif ('resnet50' in self.model_arguments['model_name']):
                 self.E = self.dim
                 self.L = self.E
                 self.D = 128
                 self.K = self.num_classes
 
-            elif ('resnet152' in model):
+            elif ('resnet152' in self.model_arguments['model_name']):
                 self.E = self.dim
                 self.L = self.E
                 self.D = 128
@@ -82,7 +69,7 @@ class Encoder(torch.nn.Module):
         # 	conv_layers_out = dropout(conv_layers_out)
         # #print(conv_layers_out.shape)
 
-        if (EMBEDDING_bool == True):
+        if self.model_arguments["embedding_bool"]:
             #embedding_layer = self.relu(conv_layers_out)
             embedding_layer = self.embedding(conv_layers_out)
             embedding_layer = self.relu(embedding_layer)
@@ -101,4 +88,3 @@ class Encoder(torch.nn.Module):
         normalized_array = features_to_return 
 
         return normalized_array
-    

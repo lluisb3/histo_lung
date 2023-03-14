@@ -1,17 +1,18 @@
-experiment_name: multiclass_resnet_nofreeze_multisteplr01_seg
+experiment_name: MoCo_try
 model:
-    model_name: 'resnet'
-    num_classes: 3
+    model_name: 'resnet50'
+    num_classes: 4
     freeze_weights: False
-    num_frozen_layers: 7
+    num_frozen_layers: 0
     dropout: 0.2
+    embedding_bool: True
 
 dataset:
+    k: 10
     magnification: 10
-    num_keys: 4096
     mean: [155.3132, 128.6486, 127.0073]
     stddev: [64.1200, 58.4539, 60.8631]
-    use_masks: True
+    use_masks: False
     resize: 224
 
 dataloaders:
@@ -22,6 +23,10 @@ data_aug:
     prob: 0.5
 
 training:
+    num_keys: 4096
+    moco_dim: 128
+    moco_m: 0.999
+    temperature: 0.07
     criterion: 'CrossEntropyLoss'
     criterion_args:
         weight: [0.46615505706414795, 0.607831562377017,0.9260133805588351]
@@ -33,6 +38,7 @@ training:
     lr_scheduler_args:
         milestones: [10,25,30,45]
         gamma: 0.1
-    n_epochs: 50
-    best_metric: 'kappa'
+    epochs: 20
+    early_stop: 10
+    best_metric: 'accuracy'
     resume_training: False

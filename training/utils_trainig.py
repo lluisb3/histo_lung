@@ -29,10 +29,13 @@ def contrastive_loss(q, k, queue, temperature):
     # BMM stands for batch matrix multiplication
     # If mat1 is B × n × M tensor, then mat2 is B × m × P tensor,
     # Then output a B × n × P tensor.
-    pos = torch.exp(torch.div(torch.bmm(q.view(batch_size, 1, dimension), k.view(batch_size, dimension, 1)).view(batch_size, 1), temperature))
+    pos = torch.exp(torch.div(torch.bmm(q.view(batch_size, 1, dimension),
+                                        k.view(batch_size, dimension, 1)).view(batch_size, 1),
+                              temperature))
 
     # Matrix multiplication is performed between the query and the queue tensor
-    neg = torch.sum(torch.exp(torch.div(torch.mm(q.view(batch_size, dimension), torch.t(queue)), temperature)), dim=1)
+    neg = torch.sum(torch.exp(torch.div(torch.mm(q.view(batch_size, dimension),
+                                                 torch.t(queue)), temperature)), dim=1)
 
     # Sum up
     denominator = neg + pos

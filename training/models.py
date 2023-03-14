@@ -1,3 +1,4 @@
+import torch
 from torch import nn
 import torchvision.models as models
 from torch.autograd import Variable
@@ -18,7 +19,7 @@ class ModelOption():
         self.seg_mask = seg_mask
         self.dropout = dropout
 
-        if self.model_name.lower() == "resnet":
+        if self.model_name.lower() == "resnet50":
             """ ResNet50 """
             self.net = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
 
@@ -26,9 +27,14 @@ class ModelOption():
                 #   Modifying the input layer to receive 4-channel image instead of 3-channel image,
                 #   We keep the pretrained weights for the RGB channels of the images
                 weight1 = self.net.conv1.weight.clone()
-                new_first_layer = nn.Conv2d(4, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3),
+                new_first_layer = nn.Conv2d(4,
+                                            64,
+                                            kernel_size=(7, 7),
+                                            stride=(2, 2),
+                                            padding=(3, 3),
                                             bias=False).requires_grad_()
-                new_first_layer.weight[:, :3, :, :].data[...] = Variable(weight1, requires_grad=True)
+                new_first_layer.weight[:, :3, :, :].data[...] = Variable(weight1,
+                                                                         requires_grad=True)
                 self.net.conv1 = new_first_layer
 
             if self.freeze:
@@ -37,19 +43,30 @@ class ModelOption():
                 # that do not have any learnable parameters, therefore if the user wants to
                 # freeze more than 2 layers we offset the num_freezed_layers with two
                 if self.num_freezed_layers > 2:
-                    self.net = self.set_parameter_requires_grad(self.net, self.num_freezed_layers + 2)
+                    self.net = self.set_parameter_requires_grad(self.net,
+                                                                self.num_freezed_layers + 2)
                 else:
-                    self.net = self.set_parameter_requires_grad(self.net, self.num_freezed_layers)
+                    self.net = self.set_parameter_requires_grad(self.net,
+                                                                
+                                                                self.num_freezed_layers)
+            self.conv_layers = nn.Sequential(*list(self.net.children())[:-1])
 
-            input_features = self.net.fc.in_features  # 2048
-            self.net.fc = nn.Sequential(nn.Dropout(p=self.dropout),
-                                        nn.Linear(input_features, input_features // 4),
-                                        nn.ReLU(inplace=True),
-                                        nn.Dropout(p=self.dropout),
-                                        nn.Linear(input_features // 4, input_features // 8),
-                                        nn.ReLU(inplace=True),
-                                        nn.Dropout(p=self.dropout),
-                                        nn.Linear(input_features // 8, self.num_classes))
+            if (torch.cuda.device_count()>1):
+                self.conv_layers = nn.DataParallel(self.conv_layers)
+
+            self.input_features = self.net.fc.in_features  # 2048
+            
+            # self.net.fc = nn.Sequential(nn.Dropout(p=self.dropout),
+            #                             nn.Linear(input_features,
+            #                                       input_features // 4),
+            #                             nn.ReLU(inplace=True),
+            #                             nn.Dropout(p=self.dropout),
+            #                             nn.Linear(input_features // 4,
+            #                                      input_features // 8),
+            #                             nn.ReLU(inplace=True),
+            #                             nn.Dropout(p=self.dropout),
+            #                             nn.Linear(input_features // 8,
+            #                                      self.num_classes))
 
             self.resize_param = 224
 
@@ -62,25 +79,34 @@ class ModelOption():
                 #   We keep the pretrained weights for the RGB channels of the images
                 weight1 = self.net.features[0][0].weight.clone()
                 bias1 = self.net.features[0][0].bias.clone()
-                new_first_layer = nn.Conv2d(4, 96, kernel_size=(4, 4), stride=(4, 4), padding=(0, 0),
+                new_first_layer = nn.Conv2d(4,
+                                            96,
+                                            kernel_size=(4, 4),
+                                            stride=(4, 4),
+                                            padding=(0, 0),
                                             bias=True).requires_grad_()
-                new_first_layer.weight[:, :3, :, :].data[...] = Variable(weight1, requires_grad=True)
+                new_first_layer.weight[:, :3, :, :].data[...] = Variable(weight1,
+                                                                         requires_grad=True)
                 new_first_layer.bias.data[...] = Variable(bias1, requires_grad=True)
                 self.net.features[0][0] = new_first_layer
 
             if self.freeze:
                 # Freezing the number of layers
-                self.net.features = self.set_parameter_requires_grad(self.net.features, self.num_freezed_layers)
+                self.net.features = self.set_parameter_requires_grad(self.net.features,
+                                                                     self.num_freezed_layers)
 
             input_features = self.net.classifier[2].in_features  # 768
             self.net.classifier[2] = nn.Sequential(nn.Dropout(p=self.dropout),
-                                                   nn.Linear(input_features, input_features // 2),
+                                                   nn.Linear(input_features,
+                                                             input_features // 2),
                                                    nn.ReLU(inplace=True),
                                                    nn.Dropout(p=self.dropout),
-                                                   nn.Linear(input_features // 2, input_features // 4),
+                                                   nn.Linear(input_features // 2,
+                                                             input_features // 4),
                                                    nn.ReLU(inplace=True),
                                                    nn.Dropout(p=self.dropout),
-                                                   nn.Linear(input_features // 4, self.num_classes))
+                                                   nn.Linear(input_features // 4,
+                                                             self.num_classes))
 
             self.resize_param = 224
 
@@ -93,25 +119,34 @@ class ModelOption():
                 #   We keep the pretrained weights for the RGB channels of the images
                 weight1 = self.net.features[0][0].weight.clone()
                 bias1 = self.net.features[0][0].bias.clone()
-                new_first_layer = nn.Conv2d(4, 96, kernel_size=(4, 4), stride=(4, 4), padding=(0, 0),
+                new_first_layer = nn.Conv2d(4,
+                                            96,
+                                            kernel_size=(4, 4),
+                                            stride=(4, 4),
+                                            padding=(0, 0),
                                             bias=True).requires_grad_()
-                new_first_layer.weight[:, :3, :, :].data[...] = Variable(weight1, requires_grad=True)
+                new_first_layer.weight[:, :3, :, :].data[...] = Variable(weight1,
+                                                                         requires_grad=True)
                 new_first_layer.bias.data[...] = Variable(bias1, requires_grad=True)
                 self.net.features[0][0] = new_first_layer
 
             if self.freeze:
                 # Freezing the number of layers
-                self.net.features = self.set_parameter_requires_grad(self.net.features, self.num_freezed_layers)
+                self.net.features = self.set_parameter_requires_grad(self.net.features,
+                                                                     self.num_freezed_layers)
 
             input_features = self.net.head.in_features  # 768
             self.net.head = nn.Sequential(nn.Dropout(p=self.dropout),
-                                          nn.Linear(input_features, input_features // 2),
+                                          nn.Linear(input_features,
+                                                    input_features // 2),
                                           nn.ReLU(inplace=True),
                                           nn.Dropout(p=self.dropout),
-                                          nn.Linear(input_features // 2, input_features // 4),
+                                          nn.Linear(input_features // 2,
+                                                    input_features // 4),
                                           nn.ReLU(inplace=True),
                                           nn.Dropout(p=self.dropout),
-                                          nn.Linear(input_features // 4, self.num_classes))
+                                          nn.Linear(input_features // 4,
+                                                    self.num_classes))
 
             self.resize_param = 224
 
@@ -123,24 +158,34 @@ class ModelOption():
                 #   Modifying the input layer to receive 4-channel image instead of 3-channel image,
                 #   We keep the pretrained weights for the RGB channels of the images
                 weight1 = self.net.features[0][0].weight.clone()
-                new_first_layer = nn.Conv2d(4, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1),
+                new_first_layer = nn.Conv2d(4,
+                                            32,
+                                            kernel_size=(3, 3),
+                                            stride=(2, 2),
+                                            padding=(1, 1),
                                             bias=False).requires_grad_()
-                new_first_layer.weight[:, :3, :, :].data[...] = Variable(weight1, requires_grad=True)
+                new_first_layer.weight[:, :3, :, :].data[...] = Variable(weight1,
+                                                                         requires_grad=True)
                 self.net.features[0][0] = new_first_layer
 
             if self.freeze:
                 # Freezing the number of layers
-                self.net.features = self.set_parameter_requires_grad(self.net.features, self.num_freezed_layers, feature_layers=9)
+                self.net.features = self.set_parameter_requires_grad(self.net.features,
+                                                                     self.num_freezed_layers,
+                                                                     feature_layers=9)
 
             input_features = self.net.classifier[1].in_features  # 1200
             self.net.classifier = nn.Sequential(nn.Dropout(p=self.dropout),
-                                                nn.Linear(input_features, input_features // 2),
+                                                nn.Linear(input_features,
+                                                          input_features // 2),
                                                 nn.ReLU(inplace=True),
                                                 nn.Dropout(p=self.dropout),
-                                                nn.Linear(input_features // 2, input_features // 4),
+                                                nn.Linear(input_features // 2,
+                                                          input_features // 4),
                                                 nn.ReLU(inplace=True),
                                                 nn.Dropout(p=self.dropout),
-                                                nn.Linear(input_features // 4, self.num_classes))
+                                                nn.Linear(input_features // 4,
+                                                          self.num_classes))
 
             self.resize_param = 224
 
