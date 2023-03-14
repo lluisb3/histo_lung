@@ -2,12 +2,23 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import click
-from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
+from iterstrat.ml_stratifiers import MultilabelStratifiedShuffleSplit
 
 thispath = Path(__file__).resolve()
 
 
-def data_splits(k):
+def data_splits(k, test_size):
+    """Performs k-fold-crossvalidation on the LungAOEC dataset with a desired
+    number of folds (k). 
+
+    Parameters
+    ----------
+    k : int
+        Number of folds
+    test_size : float
+        Percentage of images that belongs to the test set, rest of images
+        will go to the train set (from 0 to 1) 
+    """
 
     datadir = Path(thispath.parent.parent / "data")
 
@@ -16,7 +27,9 @@ def data_splits(k):
     # read data
     dataset_AOEC = pd.read_csv(csv_dataset_AOEC, sep=',', header=0).values
 
-    mskf = MultilabelStratifiedKFold(n_splits=k, shuffle=True, random_state=33)
+    mskf = MultilabelStratifiedShuffleSplit(n_splits=k,
+                                            test_size=test_size,
+                                            random_state=33)
 
     images = dataset_AOEC[:, 0]
 
@@ -44,12 +57,18 @@ def data_splits(k):
 @click.command()
 @click.option(
     "--k",
-    default="10",
+    default=10,
     prompt="Number of splits (k)",
     help="Specify number of splits to perform k-fold-crossvalidation",
 )
-def main(k):
-    data_splits(int(k))
+@click.option(
+    "--test_size",
+    default=0.2,
+    prompt="Percentage of the test dataset 0 to 1",
+    help="Percentage of the test dataset, must be from 0 to 1",
+)
+def main(k, test_size):
+    data_splits(k, test_size)
 
 
 if __name__ == "__main__":

@@ -148,7 +148,6 @@ N_CLASSES = 5
 csv_folder = Path(thispath.parent / "data" / )
 #csv_folder = '/home/niccolo/ExamodePipeline/Multiple_Instance_Learning/Colon/csv_folder/partitions/current_partitions_prova/'
 
-LABELS = 'GT'
 
 # train_dataset = #LOAD CSV
 
@@ -453,6 +452,7 @@ preprocess = transforms.Compose([
 
 
 def generate_list_instances(filename):
+	# read the csv with the path for patches
 	instance_dir = '/home/niccolo/ExamodePipeline/Colon_WSI_patches/magnifications/'+'magnification_10x/'
 	fname = os.path.split(filename)[-1]
 	
@@ -470,9 +470,9 @@ class ImbalancedDatasetSampler_multilabel(torch.utils.data.sampler.Sampler):
 	def __init__(self, dataset, indices=None, num_samples=None):
 
 		self.indices = list(range(len(dataset)))             if indices is None else indices
-
+		# enumerate dataset (train or val)
 		self.num_samples = len(self.indices)             if num_samples is None else num_samples
-
+		
 		
 		label_to_count = {}
 		for idx in self.indices:
@@ -630,22 +630,21 @@ def H_E_Staining(img, Io=240, alpha=1, beta=0.15):
 
 class Dataset_instance(data.Dataset):
 
-	def __init__(self, list_IDs, mode):
-		self.list_IDs = list_IDs
+	def __init__(self, wsi_image, mode):
+		# mode valid or train
+		self.wsi_image = wsi_image
 		#self.list_IDs = list_IDs[:,0]
 		#self.list_hes = list_IDs[:,1:]
 		self.mode = mode
 
 	def __len__(self):
-		return len(self.list_IDs)
+		return len(self.wsi_image)
 
 	def __getitem__(self, index):
 		# Select sample
-		ID = self.list_IDs[index]
+		patch = self.wsi_image[index]
 		# Load data and get label
-		with open(ID, 'rb') as fin:
-			X = pyspng.load(fin.read())
-		#img.close()
+	
 
 		#k = pipeline_transform_soft(image=k)['image']
 		#k = pipeline_transform(image=q)['image']
