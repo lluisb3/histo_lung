@@ -9,7 +9,7 @@ thispath = Path(__file__).resolve()
 
 def data_splits(k, test_size):
     """Performs k-fold-crossvalidation on the LungAOEC dataset with a desired
-    number of folds (k). 
+    number of folds (k).
 
     Parameters
     ----------
@@ -17,7 +17,7 @@ def data_splits(k, test_size):
         Number of folds
     test_size : float
         Percentage of images that belongs to the test set, rest of images
-        will go to the train set (from 0 to 1) 
+        will go to the train set (from 0 to 1)
     """
 
     datadir = Path(thispath.parent.parent / "data")

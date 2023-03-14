@@ -8,6 +8,7 @@ model:
 
 dataset:
     magnification: 10
+    num_keys: 4096
     mean: [155.3132, 128.6486, 127.0073]
     stddev: [64.1200, 58.4539, 60.8631]
     use_masks: True

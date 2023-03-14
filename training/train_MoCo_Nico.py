@@ -698,7 +698,6 @@ params_bag_train = {'batch_size': batch_size_bag,
 		#'shuffle': True}
 """
 
-
 params_bag_test = {'batch_size': batch_size_bag,
 		#'sampler': sampler(train_dataset)
 	  'shuffle': True}
