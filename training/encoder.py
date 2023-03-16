@@ -7,7 +7,6 @@ class Encoder(torch.nn.Module):
         In the constructor we instantiate two nn.Linear modules and assign them as
         member variables.
         """
-
         super(Encoder, self).__init__()
 
         self.fc_input_features = model.input_features
@@ -15,6 +14,12 @@ class Encoder(torch.nn.Module):
 
         self.dim = dim  # feature dimension
         self.model_arguments = model_arguments
+        self.net = model.net
+
+        self.conv_layers = torch.nn.Sequential(*list(self.net.children())[:-1])
+
+        if (torch.cuda.device_count()>1):
+            self.conv_layers = torch.nn.DataParallel(self.conv_layers)
 
         if self.model_arguments["embedding_bool"]:
 

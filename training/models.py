@@ -49,10 +49,6 @@ class ModelOption():
                     self.net = self.set_parameter_requires_grad(self.net,
                                                                 
                                                                 self.num_freezed_layers)
-            self.conv_layers = nn.Sequential(*list(self.net.children())[:-1])
-
-            if (torch.cuda.device_count()>1):
-                self.conv_layers = nn.DataParallel(self.conv_layers)
 
             self.input_features = self.net.fc.in_features  # 2048
             

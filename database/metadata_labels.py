@@ -36,8 +36,7 @@ def labels_from_json_he():
         for a, num in zip(m, he_json):
             if a == False:
                 csv_writer(datadir, "repeated_in_json.csv", "a", [num])
-        outputdir = Path(datadir.parent / "csv_files_extra")
-        print(f"Found repeated values in JSON files. Saved in .csv file in {datadir.parent}")
+        print(f"Found repeated values in JSON files. Saved in .csv file in {datadir}")
 
     else:
         print("Not repeated values found on the JSON files")
@@ -58,9 +57,11 @@ def labels_from_json_he():
 
 
         labels_df = pd.DataFrame.from_dict(labels_he, orient="index") 
-        for col, row in labels_df.iterrows():
+        labels_df.sort_index(inplace=True)
+        for col, _ in labels_df.iterrows():
             for name in he_csv:
                 if col.split("_")[0] in name:
+                    name = name.split(".")[0]
                     labels_df.rename(index={col: name}, inplace=True)
         labels_df.drop("cancer_nscc_large", inplace=True, axis=1)
         labels_df.to_csv(Path(datadir / "labels.csv"), header=True, index_label="image_num")
@@ -76,4 +77,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

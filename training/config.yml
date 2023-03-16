@@ -8,14 +8,14 @@ model:
     embedding_bool: True
 
 dataset:
-    k: 10
     magnification: 10
-    mean: [155.3132, 128.6486, 127.0073]
-    stddev: [64.1200, 58.4539, 60.8631]
+    mean: [0.485, 0.456, 0.406]
+    stddev: [0.229, 0.224, 0.225]
     use_masks: False
     resize: 224
 
-dataloaders:
+dataloader:
+    batch_size_bag: 16
     batch_size: 256
     num_workers: 4
 
@@ -23,7 +23,7 @@ data_aug:
     prob: 0.5
 
 training:
-    num_keys: 4096
+    num_keys: 32768
     moco_dim: 128
     moco_m: 0.999
     temperature: 0.07

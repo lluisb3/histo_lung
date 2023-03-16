@@ -1134,10 +1134,6 @@ while (epoch<num_epochs and early_stop_cont<EARLY_STOP_NUM):
 	np.savetxt(filename_hyperparameters, df.values, fmt='%s',delimiter=',')
 	"""
 
-
-	
-
-	
 	epoch = epoch+1
 	if (early_stop_cont == EARLY_STOP_NUM):
 		print("EARLY STOPPING")
