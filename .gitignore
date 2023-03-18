@@ -7,7 +7,6 @@ csv_files_extra
 PyHIST
 CLAM
 bash_files/*
-.pylintrc
 trained_models/*
 
 # Byte-compiled / optimized / DLL files
