@@ -641,8 +641,10 @@ class Dataset_instance(data.Dataset):
 		return len(self.wsi_image)
 
 	def __getitem__(self, index):
+		ID = self.list_IDs[index]
 		# Select sample
-		patch = self.wsi_image[index]
+		with open(ID, 'rb') as fin:
+			X = pyspng.load(fin.read())
 		# Load data and get label
 	
 

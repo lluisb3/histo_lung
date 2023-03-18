@@ -1,4 +1,6 @@
 from pathlib import Path
+import logging
+import time
 import yaml
 import numpy as np
 import pandas as pd
@@ -10,7 +12,8 @@ from torch.utils.data import DataLoader
 import albumentations as A
 from torchvision import transforms
 from training import ModelOption, Encoder
-from training import generate_list_instances, momentum_step, contrastive_loss, update_queue
+from training import momentum_step, contrastive_loss, update_queue
+from utils import timer
 
 thispath = Path(__file__).resolve()
 
@@ -19,24 +22,24 @@ datadir = Path(thispath.parent.parent / "data")
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def train(dataloader, optimizer, encoder, momentum_encoder, transform, preprocess, cfg, outputdir):
+def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, preprocess, cfg, outputdir):
     # Training
-    print('\nStart training!')
+    logging.info("== Start training ==")
+    start_time = time.time()
     
     pyhistdir = Path(datadir / "Mask_PyHIST_v2")
     dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
 
     number_patches = 0
     path_patches = []
-    for wsi in tqdm(dataset_path, desc="Selecting all patches for training"):
+    for wsi_patches in tqdm(dataset_path, desc="Selecting all patches for training"):
 
-        csv_instances = pd.read_csv(wsi).to_numpy()
-        l_csv = len(csv_instances)
+        csv_instances = pd.read_csv(wsi_patches).to_numpy()
         
-        number_patches = number_patches + l_csv
+        number_patches = number_patches + len(csv_instances)
         path_patches.extend(csv_instances)
 
-    print(f"Total number of patches {number_patches}")
+    logging.info(f"Total number of patches {number_patches}")
 
     # Load hyperparameters
     training_arguments = cfg["training"]
@@ -53,9 +56,6 @@ def train(dataloader, optimizer, encoder, momentum_encoder, transform, preproces
     early_stop = training_arguments["early_stop"]
     early_stop_cont = 0
 
-    # number of epochs without improvement
-    iterations = int(len(dataset_path) / cfg["dataloader"]["batch_size_bag"])
-
     best_loss = 100000.0
 
     tot_iterations = training_arguments["epochs"] * iterations_per_epoch
@@ -69,13 +69,10 @@ def train(dataloader, optimizer, encoder, momentum_encoder, transform, preproces
         train_loss_domain = 0.0
         train_loss_moco = 0.0
 
-        #if loss function lower
-        is_best = False
-
-        print('\n[3 / 3]. Initializing a queue with %d keys.' % num_keys)
+        logging.info(f" Initializing a queue with {num_keys} keys")
         queue = []
 
-        dataloader_iterator = iter(dataloader)
+        dataloader_iterator = iter(dataloader_bag)
 
         num_workers = 16
         params_instance = {'batch_size': batch_size,
@@ -97,9 +94,9 @@ def train(dataloader, optimizer, encoder, momentum_encoder, transform, preproces
                     break
             queue = torch.cat(queue, dim=0)
 
-        print("queue done")
+        logging.info("Queue done")
 
-        dataloader_iterator = iter(dataloader)
+        dataloader_iterator = iter(dataloader_bag)
 
         num_workers = 16
         params_instance = {'batch_size': batch_size,
@@ -111,7 +108,7 @@ def train(dataloader, optimizer, encoder, momentum_encoder, transform, preproces
         instances = Dataset_instance(path_patches, transform, preprocess)
         generator = DataLoader(instances, **params_instance)
 
-        dataloader_iterator = iter(dataloader)
+        dataloader_iterator = iter(dataloader_bag)
 
         j = 0
 
@@ -120,9 +117,9 @@ def train(dataloader, optimizer, encoder, momentum_encoder, transform, preproces
 
         for a, (x_q, x_k) in enumerate(generator):
         
-            p = float(cont_iterations_tot + epoch * tot_iterations) / training_arguments["epochs"] / tot_iterations
+            # p = float(cont_iterations_tot + epoch * tot_iterations) / training_arguments["epochs"] / tot_iterations
 
-            alpha = 2. / (1. + np.exp(-10 * p)) - 1
+            # alpha = 2. / (1. + np.exp(-10 * p)) - 1
 
             # Preprocess
             #momentum_encoder.train()
@@ -206,8 +203,7 @@ def train(dataloader, optimizer, encoder, momentum_encoder, transform, preproces
             cont_iterations_tot = cont_iterations_tot + 1
             train_loss = train_loss_moco + train_loss_domain
 
-            print('[Epoch : %d / Total iters : %d] : loss_moco :%f, loss_domain :%f ...' %(epoch, total_iters, train_loss_moco, train_loss_domain))
-
+            logging.info(f"[Epoch : {epoch} / Total iters : {total_iters}] : loss_moco :{train_loss_moco:.4f}")
 
             # Create directories for the outputs
             outputdir_results = Path(outputdir /
@@ -215,33 +211,54 @@ def train(dataloader, optimizer, encoder, momentum_encoder, transform, preproces
                                      cfg['model']['model_name'])
             Path(outputdir_results).mkdir(exist_ok=True, parents=True)
 
-            model_weights_filename = Path(outputdir_results / "MoCo.pt")
-            model_weights_temporary_filename = Path(outputdir_results / 'MoCo_temporary.pt')
+            model_filename = Path(outputdir_results / "MoCo.pt")
+            model_temporary_filename = Path(outputdir_results / 'MoCo_temporary.pt')
 
             if (total_iters%100==True):
-                print('a')
                 if (best_loss>train_loss_moco):
+                    best_epoch = epoch
+                    best_total_iters = total_iters
                     early_stop_cont = 0
-                    print ("=> Saving a new best model")
-                    print("previous loss : " + str(best_loss) + ", new loss function: " + str(train_loss_moco))
+                    logging.info ("== Saving a new best model ==")
+                    logging.info(f"At Epoch : {best_epoch} / Total iters : {best_total_iters} with a")
+                    logging.info(f"previous loss : {best_loss:.4f} new loss function: {train_loss_moco:.4f}")
                     best_loss = train_loss_moco
-                    try:
-                        torch.save(encoder.state_dict(), model_weights_filename, _use_new_zipfile_serialization=False)
-                    except:
-                        torch.save(encoder.state_dict(), model_weights_filename)
-                else:
 
                     try:
-                        torch.save(encoder.state_dict(), model_weights_temporary_filename, _use_new_zipfile_serialization=False)
+                        torch.save({'epoch': epoch,
+                                    'encoder_state_dict': encoder.state_dict(),
+                                    'optimizer_state_dict': optimizer.state_dict(),
+                                    'loss': train_loss_moco},
+                                    model_filename,
+                                    _use_new_zipfile_serialization=False)
                     except:
-                        torch.save(encoder.state_dict(), model_weights_temporary_filename)
+                        torch.save({'epoch': epoch,
+                                    'encoder_state_dict': encoder.state_dict(),
+                                    'optimizer_state_dict': optimizer.state_dict(),
+                                    'loss': train_loss_moco},
+                                    model_filename)
+                        
+                else:
+                    try:
+                        torch.save({'epoch': epoch,
+                                    'encoder_state_dict': encoder.state_dict(),
+                                    'optimizer_state_dict': optimizer.state_dict(),
+                                    'loss': train_loss_moco}, 
+                                    model_temporary_filename, 
+                                    _use_new_zipfile_serialization=False)
+                    except:
+                        torch.save({'epoch': epoch,
+                                    'encoder_state_dict': encoder.state_dict(),
+                                    'optimizer_state_dict': optimizer.state_dict(),
+                                    'loss': train_loss_moco}, 
+                                    model_temporary_filename)
 
                 torch.cuda.empty_cache()
     
             # Update learning rate
         #update_lr(epoch)
 
-        print("epoch "+str(epoch)+ " train loss: " + str(train_loss))
+        logging.info(f"Epoch {epoch} train loss: {train_loss}")
 
         # print("evaluating validation")
         """
@@ -268,49 +285,80 @@ def train(dataloader, optimizer, encoder, momentum_encoder, transform, preproces
 
         epoch = epoch+1
         if (early_stop_cont == early_stop):
-            print("EARLY STOPPING")
-
+            logging.info("======== EARLY STOPPING ========")
+    
+    message = timer(start_time, time.time())
+    logging.info(f"Training complete in {message}" )
+    logging.info(f"Best loss: {best_loss} at {best_epoch + 1} and total iters {best_total_iters}")
 
 def main():
 
-    print(f"CUDA current device {torch.cuda.current_device()}")
-    print(f"CUDA devices available {torch.cuda.device_count()}")
-
-    # read the configuration file
+        # Read the configuration file
     config_path = str(thispath.parent / 'config.yml')
     print(f"With configuration file in: {config_path}")
     with open(config_path, "r") as ymlfile:
         cfg = yaml.safe_load(ymlfile)
 
+    # Create directory to save the resuls
+    outputdir = Path(thispath.parent.parent / "trained_models" / f"{cfg['experiment_name']}")
+    Path(outputdir).mkdir(exist_ok=True, parents=True)
+
+    # For logging
+    logging.basicConfig(format='%(asctime)s %(levelname)s:%(message)s',
+                        encoding='utf-8',
+                        level=logging.INFO,
+                        handlers=[
+                            logging.FileHandler(outputdir / "debug.log"),
+                            logging.StreamHandler()
+                        ],
+                        datefmt='%m/%d/%Y %I:%M:%S %p')
+    logging.info(f"CUDA current device {torch.cuda.current_device()}")
+    logging.info(f"CUDA devices available {torch.cuda.device_count()}")
+
+    # Seed for reproducibility
     seed = 33
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     
-    # use the configuration for the network
-    model_arguments = cfg['model']
 
     # Load pretrained model
-    model = ModelOption(model_arguments['model_name'],
-                model_arguments['num_classes'],
-                freeze=model_arguments['freeze_weights'],
-                num_freezed_layers=model_arguments['num_frozen_layers'],
-                seg_mask=cfg['dataset']['use_masks'],
-                dropout=model_arguments['dropout']
+    model_arguments = cfg["model"]
+
+    model = ModelOption(model_arguments["model_name"],
+                model_arguments["num_classes"],
+                freeze=model_arguments["freeze_weights"],
+                num_freezed_layers=model_arguments["num_frozen_layers"],
+                dropout=model_arguments["dropout"],
+                embedding_bool=model_arguments["embedding_bool"]
                 )    
 
-    training_arguments = cfg["training"]
-
-    moco_dim = training_arguments["moco_dim"]
-
-    encoder = Encoder(model, model_arguments, moco_dim).to(device)
-    momentum_encoder = Encoder(model, model_arguments, moco_dim).to(device)
     
+    # Encoder and momentum encoder
+    moco_dim = cfg["training"]["moco_dim"]
+
+    encoder = Encoder(model, dim=moco_dim).to(device)
+    momentum_encoder = Encoder(model, dim=moco_dim).to(device)
+    
+    momentum_encoder.load_state_dict(encoder.state_dict(), strict=False)
+
+    for param in momentum_encoder.parameters():
+        param.requires_grad = False
+
+    # Find total parameters and trainable parameters
+    model_name = model_arguments["model_name"]
+    total_params = sum(p.numel() for p in encoder.parameters())
+    logging.info(f"Encoder and momentum encoder with pretrained ImageNet model {model_name}")
+    logging.info(f'{total_params:,} total parameters.')
+
+    total_trainable_params = sum(
+        p.numel() for p in encoder.parameters() if p.requires_grad)
+    logging.info(f'{total_trainable_params:,} training parameters.')
     # Data transformations
-    # DATA AUGMENTATION
-    
-    prob_augmentation = cfg['data_aug']['prob']
+
+    # Data augmentation
+    prob_augmentation = cfg["data_augmentation"]["prob"]
     
     pipeline_transform = A.Compose([
         # A.RandomScale(scale_limit=(-0.005,0.005), interpolation=2, p=prob),
@@ -361,41 +409,31 @@ def main():
     # Load CSV with WSI IDs
     train_dataset = pd.read_csv(Path(datadir / "labels.csv"), index_col=0)
 
-    dataloader_arguments = cfg["dataloader"]
-
-    params_train_bag = {'batch_size': dataloader_arguments["batch_size_bag"],
-		#'sampler': sampler(train_dataset,alpha=0.25)}
+    params_train_bag = {'batch_size': cfg["dataloader"]["batch_size_bag"],
 		'shuffle': True}
 
     training_set_bag = Dataset_bag(train_dataset.index.values, train_dataset.values)
     training_generator_bag = DataLoader(training_set_bag, **params_train_bag)
 
-    # Find total parameters and trainable parameters
-    total_params = sum(p.numel() for p in encoder.parameters())
-    print(f'{total_params:,} total parameters.')
-
-    total_trainable_params = sum(
-        p.numel() for p in encoder.parameters() if p.requires_grad)
-    print(f'{total_trainable_params:,} training parameters.')
-
     # Loss function
     # criterion = getattr(torch.nn, cfg['training']['criterion'])()
 
     # Optimizer
+    params_optimizer = cfg['training']['optimizer_args']
+    params_optimizer["betas"] = eval(params_optimizer["betas"])
+    params_optimizer["eps"] = eval(params_optimizer["eps"])
+    params_optimizer["weight_decay"] = eval(params_optimizer["weight_decay"])
+    
     optimizer = getattr(torch.optim, cfg['training']['optimizer'])
-    optimizer = optimizer(model.net.parameters(), **cfg['training']['optimizer_args'])
+    optimizer = optimizer(encoder.parameters(), **params_optimizer)
 
-    scheduler = getattr(torch.optim.lr_scheduler, cfg['training']['lr_scheduler'])
-    scheduler = scheduler(optimizer, **cfg['training']['lr_scheduler_args'])
+    # scheduler = getattr(torch.optim.lr_scheduler, cfg['training']['lr_scheduler'])
+    # scheduler = scheduler(optimizer, **cfg['training']['lr_scheduler_args'])
 
     # Initialize momentum_encoder with parameters of encoder.
     momentum_step(encoder, momentum_encoder, m=0)
 
     # Save config parameters for experiment
-
-    outputdir = Path(thispath.parent.parent / "trained_models" / f"{cfg['experiment_name']}")
-    Path(outputdir).mkdir(exist_ok=True, parents=True)
-
     with open(Path(f"{outputdir}/config_{cfg['experiment_name']}.yml"), 'w') as yaml_file:
         yaml.dump(cfg, yaml_file, default_flow_style=False)
 

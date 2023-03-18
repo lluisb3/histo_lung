@@ -9,33 +9,19 @@ class ModelOption():
                  num_classes: int,
                  freeze=False,
                  num_freezed_layers=0,
-                 seg_mask=False,
-                 dropout=0.0):
+                 dropout=0.0, 
+                 embedding_bool=False):
 
         self.model_name = model_name
         self.num_classes = num_classes
         self.freeze = freeze
         self.num_freezed_layers = num_freezed_layers
-        self.seg_mask = seg_mask
         self.dropout = dropout
+        self.embedding_bool = embedding_bool
 
         if self.model_name.lower() == "resnet50":
             """ ResNet50 """
             self.net = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
-
-            if self.seg_mask:
-                #   Modifying the input layer to receive 4-channel image instead of 3-channel image,
-                #   We keep the pretrained weights for the RGB channels of the images
-                weight1 = self.net.conv1.weight.clone()
-                new_first_layer = nn.Conv2d(4,
-                                            64,
-                                            kernel_size=(7, 7),
-                                            stride=(2, 2),
-                                            padding=(3, 3),
-                                            bias=False).requires_grad_()
-                new_first_layer.weight[:, :3, :, :].data[...] = Variable(weight1,
-                                                                         requires_grad=True)
-                self.net.conv1 = new_first_layer
 
             if self.freeze:
                 # Freezing the number of layers
@@ -70,22 +56,6 @@ class ModelOption():
             """ ConvNeXt small """
             self.net = models.convnext_small(weights='DEFAULT')
 
-            if self.seg_mask:
-                #   Modifying the input layer to receive 4-channel image instead of 3-channel image,
-                #   We keep the pretrained weights for the RGB channels of the images
-                weight1 = self.net.features[0][0].weight.clone()
-                bias1 = self.net.features[0][0].bias.clone()
-                new_first_layer = nn.Conv2d(4,
-                                            96,
-                                            kernel_size=(4, 4),
-                                            stride=(4, 4),
-                                            padding=(0, 0),
-                                            bias=True).requires_grad_()
-                new_first_layer.weight[:, :3, :, :].data[...] = Variable(weight1,
-                                                                         requires_grad=True)
-                new_first_layer.bias.data[...] = Variable(bias1, requires_grad=True)
-                self.net.features[0][0] = new_first_layer
-
             if self.freeze:
                 # Freezing the number of layers
                 self.net.features = self.set_parameter_requires_grad(self.net.features,
@@ -110,22 +80,6 @@ class ModelOption():
             """ Swin Transformer V2 -T """
             self.net = models.swin_v2_t(weights=models.Swin_V2_T_Weights.DEFAULT)
 
-            if self.seg_mask:
-                #   Modifying the input layer to receive 4-channel image instead of 3-channel image,
-                #   We keep the pretrained weights for the RGB channels of the images
-                weight1 = self.net.features[0][0].weight.clone()
-                bias1 = self.net.features[0][0].bias.clone()
-                new_first_layer = nn.Conv2d(4,
-                                            96,
-                                            kernel_size=(4, 4),
-                                            stride=(4, 4),
-                                            padding=(0, 0),
-                                            bias=True).requires_grad_()
-                new_first_layer.weight[:, :3, :, :].data[...] = Variable(weight1,
-                                                                         requires_grad=True)
-                new_first_layer.bias.data[...] = Variable(bias1, requires_grad=True)
-                self.net.features[0][0] = new_first_layer
-
             if self.freeze:
                 # Freezing the number of layers
                 self.net.features = self.set_parameter_requires_grad(self.net.features,
@@ -149,20 +103,6 @@ class ModelOption():
         elif self.model_name.lower() == "efficient":
             """ EfficientNet b0 """
             self.net = models.efficientnet_b0(weights='DEFAULT')
-
-            if self.seg_mask:
-                #   Modifying the input layer to receive 4-channel image instead of 3-channel image,
-                #   We keep the pretrained weights for the RGB channels of the images
-                weight1 = self.net.features[0][0].weight.clone()
-                new_first_layer = nn.Conv2d(4,
-                                            32,
-                                            kernel_size=(3, 3),
-                                            stride=(2, 2),
-                                            padding=(1, 1),
-                                            bias=False).requires_grad_()
-                new_first_layer.weight[:, :3, :, :].data[...] = Variable(weight1,
-                                                                         requires_grad=True)
-                self.net.features[0][0] = new_first_layer
 
             if self.freeze:
                 # Freezing the number of layers

@@ -2,40 +2,39 @@ import torch
 
 
 class Encoder(torch.nn.Module):
-    def __init__(self, model, model_arguments, dim):
+    def __init__(self, model, dim):
         """
         In the constructor we instantiate two nn.Linear modules and assign them as
         member variables.
         """
         super(Encoder, self).__init__()
 
-        self.fc_input_features = model.input_features
-        self.num_classes = model.num_classes
-
-        self.dim = dim  # feature dimension
-        self.model_arguments = model_arguments
-        self.net = model.net
+        self.model = model
+        self.fc_input_features = self.model.input_features
+        self.num_classes = self.model.num_classes
+        self.dim = dim
+        self.net = self.model.net
 
         self.conv_layers = torch.nn.Sequential(*list(self.net.children())[:-1])
 
         if (torch.cuda.device_count()>1):
             self.conv_layers = torch.nn.DataParallel(self.conv_layers)
 
-        if self.model_arguments["embedding_bool"]:
+        if self.model.embedding_bool:
 
-            if ('resnet34' in self.model_arguments['model_name']):
+            if ('resnet34' in self.model.model_name):
                 self.E = self.dim
                 self.L = self.E
                 self.D = 64
                 self.K = self.num_classes
 
-            elif ('resnet50' in self.model_arguments['model_name']):
+            elif ('resnet50' in self.model.model_name):
                 self.E = self.dim
                 self.L = self.E
                 self.D = 128
                 self.K = self.num_classes
 
-            elif ('resnet152' in self.model_arguments['model_name']):
+            elif ('resnet152' in self.model.model_name):
                 self.E = self.dim
                 self.L = self.E
                 self.D = 128
@@ -67,14 +66,7 @@ class Encoder(torch.nn.Module):
 
             conv_layers_out = conv_layers_out.view(-1, self.fc_input_features)
 
-        #print(conv_layers_out.shape)
-
-        # if ('mobilenet' in model):
-        # 	#dropout = torch.nn.Dropout(p=0.2)
-        # 	conv_layers_out = dropout(conv_layers_out)
-        # #print(conv_layers_out.shape)
-
-        if self.model_arguments["embedding_bool"]:
+        if self.model.embedding_bool:
             #embedding_layer = self.relu(conv_layers_out)
             embedding_layer = self.embedding(conv_layers_out)
             embedding_layer = self.relu(embedding_layer)

@@ -33,21 +33,24 @@ def compare_read_images():
     for image in tqdm(path_patches, desc="Read with openCV"):
         img = cv.imread(image[0])
     print(f"Time to read {len(path_patches)} with openCV")
-    timer(start, time())
+    message = timer(start, time())
+    print(message)
 
     start = time()
     for image in tqdm(path_patches, desc="Read with Pillow"):
         img = Image.open(image[0])
         pix = np.array(img)
     print(f"Time to read {len(path_patches)} with Pillow")
-    timer(start, time())
+    message = timer(start, time())
+    print(message)
 
     start = time()
     for image in tqdm(path_patches, desc="Read with pyspng"):
         with open(image[0], 'rb') as fin:
             img = pyspng.load(fin.read())
     print(f"Time to read {len(path_patches)} with pyspng")
-    timer(start, time())
+    message = timer(start, time())
+    print(message)
 
 
 def main():
