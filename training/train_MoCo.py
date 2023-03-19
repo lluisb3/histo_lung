@@ -1,4 +1,8 @@
 from pathlib import Path
+import os
+import subprocess
+from typing import Optional, List
+from easydict import EasyDict as edict
 import logging
 import time
 import yaml
@@ -14,6 +18,7 @@ from torchvision import transforms
 from training import ModelOption, Encoder
 from training import momentum_step, contrastive_loss, update_queue
 from utils import timer
+import wandb
 
 thispath = Path(__file__).resolve()
 
@@ -21,6 +26,39 @@ datadir = Path(thispath.parent.parent / "data")
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
+def initialize_wandb(
+    cfg,
+    tags: Optional[List] = None,
+    key: Optional[str] = "",
+):
+    command = f"wandb login {key}"
+    subprocess.call(command, shell=True)
+    if tags == None:
+        tags = []
+    run = wandb.init(
+        project=cfg.wandb.project,
+        entity=cfg.wandb.username,
+        name=cfg.wandb.exp_name,
+        group=cfg.wandb.group,
+        dir=cfg.wandb.dir,
+        config=cfg,
+        tags=tags,
+    )
+    return run 
+
+
+def yaml_load(fileName):
+    dict_config = None
+    with open(fileName, 'r') as ymlfile:
+        dict_config = edict(yaml.safe_load(ymlfile))
+
+    return dict_config
+
+    # config_path = str(thispath.parent / 'config.yml')
+    # print(f"With configuration file in: {config_path}")
+    # with open(config_path, "r") as ymlfile:
+    #     cfg = yaml.safe_load(ymlfile)
 
 def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, preprocess, cfg, outputdir):
     # Training
@@ -42,26 +80,25 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
     logging.info(f"Total number of patches {number_patches}")
 
     # Load hyperparameters
-    training_arguments = cfg["training"]
 
-    moco_m = training_arguments["moco_m"]
-    temperature = training_arguments["temperature"]
-    num_keys = training_arguments["num_keys"]
-    batch_size = cfg["dataloader"]["batch_size"]
+    moco_m = cfg.training.moco_m
+    temperature = cfg.training.temperature
+    num_keys = cfg.training.num_keys
+    batch_size = cfg.dataloader.batch_size
     shuffle_bn = True
 
     iterations_per_epoch = (number_patches / batch_size) + 1
     epoch = 0 
     # number of epochs without improvement
-    early_stop = training_arguments["early_stop"]
+    early_stop = cfg.training.early_stop
     early_stop_cont = 0
 
     best_loss = 100000.0
 
-    tot_iterations = training_arguments["epochs"] * iterations_per_epoch
+    tot_iterations = cfg.training.epochs * iterations_per_epoch
     cont_iterations_tot = 0
 
-    while (epoch < training_arguments["epochs"] and early_stop_cont < early_stop):
+    while (epoch < cfg.training.epochs and early_stop_cont < early_stop):
         total_iters = 0 
     
         #accumulator loss for the outputs
@@ -207,8 +244,8 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
 
             # Create directories for the outputs
             outputdir_results = Path(outputdir /
-                                     str(cfg['dataset']['magnification']) / 
-                                     cfg['model']['model_name'])
+                                     str(cfg.dataset.magnification) / 
+                                     cfg.model.model_name)
             Path(outputdir_results).mkdir(exist_ok=True, parents=True)
 
             model_filename = Path(outputdir_results / "MoCo.pt")
@@ -291,16 +328,28 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
     logging.info(f"Training complete in {message}" )
     logging.info(f"Best loss: {best_loss} at {best_epoch + 1} and total iters {best_total_iters}")
 
-def main():
+
+
+def main(config_file):
 
         # Read the configuration file
-    config_path = str(thispath.parent / 'config.yml')
-    print(f"With configuration file in: {config_path}")
-    with open(config_path, "r") as ymlfile:
-        cfg = yaml.safe_load(ymlfile)
 
+    config_path = Path(thispath.parent / f"config/{config_file}.yaml")
+    cfg = yaml_load(config_path)
+    # config_path = str(thispath.parent / 'config.yml')
+    # print(f"With configuration file in: {config_path}")
+    # with open(config_path, "r") as ymlfile:
+    #     cfg = yaml.safe_load(ymlfile)
+
+    # wandb login
+    wandb.login()
+
+    if cfg.wandb.enable:
+            key = os.environ.get("WANDB_API_KEY")
+            wandb_run = initialize_wandb(cfg, key=key)
+            wandb_run.define_metric("epoch", summary="max")
     # Create directory to save the resuls
-    outputdir = Path(thispath.parent.parent / "trained_models" / f"{cfg['experiment_name']}")
+    outputdir = Path(thispath.parent.parent / "trained_models" / f"{cfg.experiment_name}")
     Path(outputdir).mkdir(exist_ok=True, parents=True)
 
     # For logging
@@ -324,19 +373,18 @@ def main():
     
 
     # Load pretrained model
-    model_arguments = cfg["model"]
 
-    model = ModelOption(model_arguments["model_name"],
-                model_arguments["num_classes"],
-                freeze=model_arguments["freeze_weights"],
-                num_freezed_layers=model_arguments["num_frozen_layers"],
-                dropout=model_arguments["dropout"],
-                embedding_bool=model_arguments["embedding_bool"]
+    model = ModelOption(cfg.model.model_name,
+                cfg.model.num_classes,
+                freeze=cfg.model.freeze_weights,
+                num_freezed_layers=cfg.model.num_frozen_layers,
+                dropout=cfg.model.dropout,
+                embedding_bool=cfg.model.embedding_bool
                 )    
 
     
     # Encoder and momentum encoder
-    moco_dim = cfg["training"]["moco_dim"]
+    moco_dim = cfg.training.moco_dim
 
     encoder = Encoder(model, dim=moco_dim).to(device)
     momentum_encoder = Encoder(model, dim=moco_dim).to(device)
@@ -347,7 +395,7 @@ def main():
         param.requires_grad = False
 
     # Find total parameters and trainable parameters
-    model_name = model_arguments["model_name"]
+    model_name = cfg.model.model_name
     total_params = sum(p.numel() for p in encoder.parameters())
     logging.info(f"Encoder and momentum encoder with pretrained ImageNet model {model_name}")
     logging.info(f'{total_params:,} total parameters.')
@@ -358,7 +406,7 @@ def main():
     # Data transformations
 
     # Data augmentation
-    prob_augmentation = cfg["data_augmentation"]["prob"]
+    prob_augmentation = cfg.data_augmentation.prob
     
     pipeline_transform = A.Compose([
         # A.RandomScale(scale_limit=(-0.005,0.005), interpolation=2, p=prob),
@@ -401,7 +449,7 @@ def main():
     #DATA NORMALIZATION
     preprocess = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize(mean=cfg["dataset"]["mean"], std=cfg["dataset"]["stddev"]),
+        transforms.Normalize(mean=cfg.dataset.mean, std=cfg.dataset.stddev),
         transforms.Resize(size=(model.resize_param, model.resize_param))
     ])
 
@@ -409,33 +457,34 @@ def main():
     # Load CSV with WSI IDs
     train_dataset = pd.read_csv(Path(datadir / "labels.csv"), index_col=0)
 
-    params_train_bag = {'batch_size': cfg["dataloader"]["batch_size_bag"],
+    params_train_bag = {'batch_size': cfg.dataloader.batch_size_bag,
 		'shuffle': True}
 
     training_set_bag = Dataset_bag(train_dataset.index.values, train_dataset.values)
     training_generator_bag = DataLoader(training_set_bag, **params_train_bag)
 
     # Loss function
-    # criterion = getattr(torch.nn, cfg['training']['criterion'])()
+    # criterion = getattr(torch.nn, cfg.training.criterion)()
 
     # Optimizer
-    params_optimizer = cfg['training']['optimizer_args']
-    params_optimizer["betas"] = eval(params_optimizer["betas"])
-    params_optimizer["eps"] = eval(params_optimizer["eps"])
-    params_optimizer["weight_decay"] = eval(params_optimizer["weight_decay"])
-    
-    optimizer = getattr(torch.optim, cfg['training']['optimizer'])
-    optimizer = optimizer(encoder.parameters(), **params_optimizer)
+    cfg.training.optimizer_args.betas = eval(cfg.training.optimizer_args.betas)
+    cfg.training.optimizer_args.eps = eval(cfg.training.optimizer_args.eps)
+    cfg.training.optimizer_args.weight_decay = eval(cfg.training.optimizer_args.weight_decay)
 
-    # scheduler = getattr(torch.optim.lr_scheduler, cfg['training']['lr_scheduler'])
-    # scheduler = scheduler(optimizer, **cfg['training']['lr_scheduler_args'])
+    optimizer = getattr(torch.optim, cfg.training.optimizer)
+    optimizer = optimizer(encoder.parameters(), **cfg.training.optimizer_args)
+
+    # scheduler = getattr(torch.optim.lr_scheduler, cfg.training.lr_scheduler)
+    # scheduler = scheduler(optimizer, **cfg.training.lr_scheduler_args)
 
     # Initialize momentum_encoder with parameters of encoder.
     momentum_step(encoder, momentum_encoder, m=0)
 
     # Save config parameters for experiment
-    with open(Path(f"{outputdir}/config_{cfg['experiment_name']}.yml"), 'w') as yaml_file:
+    with open(Path(f"{outputdir}/config_{cfg.experiment_name}.yml"), 'w') as yaml_file:
         yaml.dump(cfg, yaml_file, default_flow_style=False)
+
+    torch.backends.cudnn.benchmark=True
 
     # Start training
     train(training_generator_bag,

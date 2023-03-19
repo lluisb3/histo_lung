@@ -44,3 +44,12 @@ training:
     #     gamma: 0.1
     # best_metric: 'accuracy'
     resume_training: False
+
+wandb:
+  enable: True
+  project: 'HIPT_Colon'
+  username: 'lluisb3'
+  exp_name: '${experiment_name}'
+  dir: '/data/pathology/projects/pathology-self-supervision/'
+  group:
+  to_log: ['loss']
