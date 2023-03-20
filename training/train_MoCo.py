@@ -1,24 +1,23 @@
 from pathlib import Path
-import os
-import subprocess
-from typing import Optional, List
-from easydict import EasyDict as edict
 import logging
 import time
 import yaml
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import click
 from natsort import natsorted
 import torch
 from database import Dataset_instance, Dataset_bag
 from torch.utils.data import DataLoader
 import albumentations as A
 from torchvision import transforms
-from training import ModelOption, Encoder
-from training import momentum_step, contrastive_loss, update_queue
+from training.encoder import Encoder
+from training.models import ModelOption
+from training.utils_trainig import momentum_step, contrastive_loss, update_queue
+from training.utils_trainig import yaml_load, initialize_wandb, edict2dict
 from utils import timer
-import wandb
+import wandb 
 
 thispath = Path(__file__).resolve()
 
@@ -26,39 +25,6 @@ datadir = Path(thispath.parent.parent / "data")
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
-def initialize_wandb(
-    cfg,
-    tags: Optional[List] = None,
-    key: Optional[str] = "",
-):
-    command = f"wandb login {key}"
-    subprocess.call(command, shell=True)
-    if tags == None:
-        tags = []
-    run = wandb.init(
-        project=cfg.wandb.project,
-        entity=cfg.wandb.username,
-        name=cfg.wandb.exp_name,
-        group=cfg.wandb.group,
-        dir=cfg.wandb.dir,
-        config=cfg,
-        tags=tags,
-    )
-    return run 
-
-
-def yaml_load(fileName):
-    dict_config = None
-    with open(fileName, 'r') as ymlfile:
-        dict_config = edict(yaml.safe_load(ymlfile))
-
-    return dict_config
-
-    # config_path = str(thispath.parent / 'config.yml')
-    # print(f"With configuration file in: {config_path}")
-    # with open(config_path, "r") as ymlfile:
-    #     cfg = yaml.safe_load(ymlfile)
 
 def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, preprocess, cfg, outputdir):
     # Training
@@ -85,6 +51,7 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
     temperature = cfg.training.temperature
     num_keys = cfg.training.num_keys
     batch_size = cfg.dataloader.batch_size
+    num_workers = cfg.dataloader.num_workers
     shuffle_bn = True
 
     iterations_per_epoch = (number_patches / batch_size) + 1
@@ -99,19 +66,18 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
     cont_iterations_tot = 0
 
     while (epoch < cfg.training.epochs and early_stop_cont < early_stop):
+        wandb.log({"epoch": epoch + 1})
+
         total_iters = 0 
     
         #accumulator loss for the outputs
-        train_loss = 0.0
-        train_loss_domain = 0.0
         train_loss_moco = 0.0
 
-        logging.info(f" Initializing a queue with {num_keys} keys")
+        logging.info(f"Initializing a queue with {num_keys} keys")
         queue = []
 
         dataloader_iterator = iter(dataloader_bag)
 
-        num_workers = 16
         params_instance = {'batch_size': batch_size,
                            'shuffle': True,
                            'pin_memory': True,
@@ -135,7 +101,6 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
 
         dataloader_iterator = iter(dataloader_bag)
 
-        num_workers = 16
         params_instance = {'batch_size': batch_size,
                            'shuffle': True,
                            'pin_memory': True,
@@ -238,20 +203,19 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
             train_loss_moco = train_loss_moco + ((1 / (total_iters+1)) * (loss_moco.item() - train_loss_moco)) 
             total_iters = total_iters + 1
             cont_iterations_tot = cont_iterations_tot + 1
-            train_loss = train_loss_moco + train_loss_domain
 
             logging.info(f"[Epoch : {epoch} / Total iters : {total_iters}] : loss_moco :{train_loss_moco:.4f}")
 
             # Create directories for the outputs
             outputdir_results = Path(outputdir /
-                                     str(cfg.dataset.magnification) / 
+                                     cfg.dataset.magnification / 
                                      cfg.model.model_name)
             Path(outputdir_results).mkdir(exist_ok=True, parents=True)
 
-            model_filename = Path(outputdir_results / "MoCo.pt")
-            model_temporary_filename = Path(outputdir_results / 'MoCo_temporary.pt')
+            model_filename = Path(outputdir_results / f"{cfg.experiment_name}.pt")
+            model_temporary_filename = Path(outputdir_results / f"{cfg.experiment_name}_temporary.pt")
 
-            if (total_iters%100==True):
+            if (total_iters%200==True):
                 if (best_loss>train_loss_moco):
                     best_epoch = epoch
                     best_total_iters = total_iters
@@ -272,7 +236,7 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
                         torch.save({'epoch': epoch,
                                     'encoder_state_dict': encoder.state_dict(),
                                     'optimizer_state_dict': optimizer.state_dict(),
-                                    'loss': train_loss_moco},
+                                    'loss': best_loss},
                                     model_filename)
                         
                 else:
@@ -295,7 +259,12 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
             # Update learning rate
         #update_lr(epoch)
 
-        logging.info(f"Epoch {epoch} train loss: {train_loss}")
+        wandb.define_metric("train/lr", step_metric="epoch")
+        wandb.define_metric("train/loss", step_metric="epoch")
+        wandb.log({"train/lr": optimizer.param_groups[0]["lr"]})
+        wandb.log({"train/loss": best_loss})
+
+        logging.info(f"Epoch {epoch} train loss: {train_loss_moco}")
 
         # print("evaluating validation")
         """
@@ -329,28 +298,34 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
     logging.info(f"Best loss: {best_loss} at {best_epoch + 1} and total iters {best_total_iters}")
 
 
-
+@click.command()
+@click.option(
+    "--config_file",
+    default="config",
+    prompt="Name of the config file without extension",
+    help="Name of the config file without extension",
+)
 def main(config_file):
 
-        # Read the configuration file
-
-    config_path = Path(thispath.parent / f"config/{config_file}.yaml")
-    cfg = yaml_load(config_path)
+    # Read the configuration file
+    configdir = Path(thispath.parent / f"{config_file}.yml")
+    cfg = yaml_load(configdir)
     # config_path = str(thispath.parent / 'config.yml')
     # print(f"With configuration file in: {config_path}")
     # with open(config_path, "r") as ymlfile:
     #     cfg = yaml.safe_load(ymlfile)
 
+    # Create directory to save the resuls
+    outputdir = Path(thispath.parent.parent / "trained_models" / f"{cfg.experiment_name}")
+    Path(outputdir).mkdir(exist_ok=True, parents=True)
+
     # wandb login
     wandb.login()
 
     if cfg.wandb.enable:
-            key = os.environ.get("WANDB_API_KEY")
-            wandb_run = initialize_wandb(cfg, key=key)
+            # key = os.environ.get("WANDB_API_KEY")
+            wandb_run = initialize_wandb(cfg, outputdir)
             wandb_run.define_metric("epoch", summary="max")
-    # Create directory to save the resuls
-    outputdir = Path(thispath.parent.parent / "trained_models" / f"{cfg.experiment_name}")
-    Path(outputdir).mkdir(exist_ok=True, parents=True)
 
     # For logging
     logging.basicConfig(format='%(asctime)s %(levelname)s:%(message)s',
@@ -467,9 +442,9 @@ def main(config_file):
     # criterion = getattr(torch.nn, cfg.training.criterion)()
 
     # Optimizer
-    cfg.training.optimizer_args.betas = eval(cfg.training.optimizer_args.betas)
-    cfg.training.optimizer_args.eps = eval(cfg.training.optimizer_args.eps)
-    cfg.training.optimizer_args.weight_decay = eval(cfg.training.optimizer_args.weight_decay)
+    # cfg.training.optimizer_args.betas = eval(cfg.training.optimizer_args.betas)
+    # cfg.training.optimizer_args.eps = eval(cfg.training.optimizer_args.eps)
+    # cfg.training.optimizer_args.weight_decay = eval(cfg.training.optimizer_args.weight_decay)
 
     optimizer = getattr(torch.optim, cfg.training.optimizer)
     optimizer = optimizer(encoder.parameters(), **cfg.training.optimizer_args)
@@ -482,7 +457,7 @@ def main(config_file):
 
     # Save config parameters for experiment
     with open(Path(f"{outputdir}/config_{cfg.experiment_name}.yml"), 'w') as yaml_file:
-        yaml.dump(cfg, yaml_file, default_flow_style=False)
+        yaml.dump(edict2dict(cfg), yaml_file, default_flow_style=False)
 
     torch.backends.cudnn.benchmark=True
 
@@ -496,6 +471,8 @@ def main(config_file):
           cfg,
           outputdir)
 
+    # Close wandb run 
+    wandb.finish()
 
 if __name__ == '__main__':
     main()

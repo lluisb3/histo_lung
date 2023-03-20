@@ -1,8 +1,53 @@
 from pathlib import Path
 import pandas as pd
 import torch
+from easydict import EasyDict as edict
+from typing import Optional, List
+import yaml
+import wandb
 
 thispath = Path(__file__).resolve()
+
+
+def edict2dict(edict_obj):
+    dict_obj = {}
+
+    for key, vals in edict_obj.items():
+        if isinstance(vals, edict):
+            dict_obj[key] = edict2dict(vals)
+        else:
+            dict_obj[key] = vals
+
+    return dict_obj
+
+
+def initialize_wandb(
+    cfg,
+    outputdir,
+    tags: Optional[List] = None,
+):
+    outputdir = Path(outputdir / "wandb")
+    Path(outputdir).mkdir(exist_ok=True, parents=True)
+    if tags == None:
+        tags = []
+    run = wandb.init(
+        project=cfg.wandb.project,
+        entity=cfg.wandb.username,
+        name=cfg.experiment_name,
+        group=cfg.wandb.group,
+        dir= outputdir,
+        config=cfg,
+        tags=tags,
+    )
+    return run 
+
+
+def yaml_load(fileName):
+    dict_config = None
+    with open(fileName, 'r') as ymlfile:
+        dict_config = edict(yaml.safe_load(ymlfile))
+
+    return dict_config
 
 
 def generate_list_instances(wsi_path):

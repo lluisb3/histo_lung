@@ -1,4 +1,4 @@
-experiment_name: MoCo_try_Adam
+experiment_name: MoCo_try_wandb_configsave
 model:
     model_name: 'resnet50'
     num_classes: 4
@@ -8,14 +8,14 @@ model:
     embedding_bool: True
 
 dataset:
-    magnification: 10
+    magnification: "10"
     mean: [0.485, 0.456, 0.406]
     stddev: [0.229, 0.224, 0.225]
 
 dataloader:
     batch_size_bag: 16
     batch_size: 256
-    num_workers: 4
+    num_workers: 16
 
 data_augmentation:
     prob: 0.5
@@ -30,9 +30,11 @@ training:
     optimizer: 'Adam'
     optimizer_args:
         lr: 0.01
-        betas: (0.9, 0.999)
-        eps: 1e-08
-        weight_decay: 1e-4
+        betas:
+        - 0.9
+        - 0.999
+        eps: 1.0e-08
+        weight_decay: 1.0e-4
         amsgrad: True
     # optimizer_args:
     #     lr: 0.01
@@ -47,9 +49,7 @@ training:
 
 wandb:
   enable: True
-  project: 'HIPT_Colon'
-  username: 'lluisb3'
-  exp_name: '${experiment_name}'
-  dir: '/data/pathology/projects/pathology-self-supervision/'
-  group:
+  project: "histo_lung"
+  username: "lluisb3"
+  group: "MedGIFT"
   to_log: ['loss']
