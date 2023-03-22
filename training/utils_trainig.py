@@ -1,5 +1,7 @@
 from pathlib import Path
 import pandas as pd
+import numpy as np
+from numpy.linalg import norm
 import torch
 from easydict import EasyDict as edict
 from typing import Optional, List
@@ -7,6 +9,11 @@ import yaml
 import wandb
 
 thispath = Path(__file__).resolve()
+
+
+def cosine_similarity(a, b):
+    cosine = np.dot(a,b)/(norm(a)*norm(b))
+    print(f"Cosine Similarity: {cosine}")
 
 
 def edict2dict(edict_obj):

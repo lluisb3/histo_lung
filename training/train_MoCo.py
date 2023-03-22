@@ -46,7 +46,6 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
     logging.info(f"Total number of patches {number_patches}")
 
     # Load hyperparameters
-
     moco_m = cfg.training.moco_m
     temperature = cfg.training.temperature
     num_keys = cfg.training.num_keys
@@ -62,13 +61,22 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
 
     best_loss = 100000.0
 
-    tot_iterations = cfg.training.epochs * iterations_per_epoch
+    # tot_iterations = cfg.training.epochs * iterations_per_epoch
     cont_iterations_tot = 0
+    
+    # Save gradients and parameters of the model
+    # wandb.watch(encoder, log="all", log_freq=1000, log_graph=True)
+    # wandb.watch(momentum_encoder, log="all", log_freq=1000, log_graph=True)
 
+    # Switch to train mode
+    encoder.train()
+    momentum_encoder.train()
+    
     while (epoch < cfg.training.epochs and early_stop_cont < early_stop):
         wandb.log({"epoch": epoch + 1})
 
-        total_iters = 0 
+        total_iters = 0
+        start_time_epoch = time.time() 
     
         #accumulator loss for the outputs
         train_loss_moco = 0.0
@@ -76,7 +84,7 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
         logging.info(f"Initializing a queue with {num_keys} keys")
         queue = []
 
-        dataloader_iterator = iter(dataloader_bag)
+        # dataloader_iterator = iter(dataloader_bag)
 
         params_instance = {'batch_size': batch_size,
                            'shuffle': True,
@@ -99,23 +107,20 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
 
         logging.info("Queue done")
 
-        dataloader_iterator = iter(dataloader_bag)
+        # dataloader_iterator = iter(dataloader_bag)
 
-        params_instance = {'batch_size': batch_size,
-                           'shuffle': True,
-                           'pin_memory': True,
-                           'drop_last':True,
-                           'num_workers': num_workers}
+        # params_instance = {'batch_size': batch_size,
+        #                    'shuffle': True,
+        #                    'pin_memory': True,
+        #                    'drop_last':True,
+        #                    'num_workers': num_workers}
 
-        instances = Dataset_instance(path_patches, transform, preprocess)
-        generator = DataLoader(instances, **params_instance)
+        # instances = Dataset_instance(path_patches, transform, preprocess)
+        # generator = DataLoader(instances, **params_instance)
 
-        dataloader_iterator = iter(dataloader_bag)
+        # dataloader_iterator = iter(dataloader_bag)
 
         j = 0
-
-        encoder.train()
-        momentum_encoder.train()
 
         for a, (x_q, x_k) in enumerate(generator):
         
@@ -216,14 +221,19 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
             model_temporary_filename = Path(outputdir_results / f"{cfg.experiment_name}_temporary.pt")
 
             if (total_iters%200==True):
+                wandb.log({"iterations": cont_iterations_tot})
+                wandb.define_metric("train/loss_iter", step_metric="iterations")
+                wandb.log({"train/loss_iter": train_loss_moco})
+
                 if (best_loss>train_loss_moco):
                     best_epoch = epoch
                     best_total_iters = total_iters
                     early_stop_cont = 0
                     logging.info ("== Saving a new best model ==")
-                    logging.info(f"At Epoch : {best_epoch} / Total iters : {best_total_iters} with a")
-                    logging.info(f"previous loss : {best_loss:.4f} new loss function: {train_loss_moco:.4f}")
+                    logging.info(f"At Epoch : {best_epoch} / Total iters : {best_total_iters}")
+                    logging.info(f"Previous loss : {best_loss:.4f} New loss: {train_loss_moco:.4f}")
                     best_loss = train_loss_moco
+
 
                     try:
                         torch.save({'epoch': epoch,
@@ -256,15 +266,17 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
 
                 torch.cuda.empty_cache()
     
-            # Update learning rate
+        # Update learning rate
         #update_lr(epoch)
 
         wandb.define_metric("train/lr", step_metric="epoch")
         wandb.define_metric("train/loss", step_metric="epoch")
         wandb.log({"train/lr": optimizer.param_groups[0]["lr"]})
-        wandb.log({"train/loss": best_loss})
+        wandb.log({"train/loss": train_loss_moco})
 
         logging.info(f"Epoch {epoch} train loss: {train_loss_moco}")
+        message = timer(start_time_epoch, time.time())
+        logging.info(f"Time to complete epoch {epoch + 1} is {message}" )
 
         # print("evaluating validation")
         """
@@ -292,10 +304,14 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
         epoch = epoch+1
         if (early_stop_cont == early_stop):
             logging.info("======== EARLY STOPPING ========")
-    
+
     message = timer(start_time, time.time())
     logging.info(f"Training complete in {message}" )
     logging.info(f"Best loss: {best_loss} at {best_epoch + 1} and total iters {best_total_iters}")
+
+    # Save model as onnx
+    encoder.to_onnx()
+    wandb.save(f"{cfg.experiment_name}.onnx")
 
 
 @click.command()
@@ -363,6 +379,8 @@ def main(config_file):
 
     encoder = Encoder(model, dim=moco_dim).to(device)
     momentum_encoder = Encoder(model, dim=moco_dim).to(device)
+
+    # Track gradients
     
     momentum_encoder.load_state_dict(encoder.state_dict(), strict=False)
 

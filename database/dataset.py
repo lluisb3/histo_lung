@@ -23,10 +23,14 @@ class Dataset_instance(Dataset):
         with open(self.wsi_path_patches[index][0], 'rb') as fin:
             key =  pyspng.load(fin.read())
 
-        query = self.transform(image=key)['image']
+        if self.transform:
+            query = self.transform(image=key)['image']
+        else:
+            query = key
 
-        query = self.preprocess(query).type(torch.FloatTensor)
-        key = self.preprocess(key).type(torch.FloatTensor)
+        if self.preprocess:
+            query = self.preprocess(query).type(torch.FloatTensor)
+            key = self.preprocess(key).type(torch.FloatTensor)
         
         return key, query
 
