@@ -28,7 +28,6 @@ def bash_file(name_experiment):
     outputdir = Path(thispath.parent.parent / "data" / "Mask_PyHIST_v2" )
 
     svs_files = [i for i in datadir.rglob("*.svs") if "LungAOEC" in str(i)]
-
     labels = pd.read_csv(Path(thispath.parent.parent / "data" / "lung_data" / "he_images.csv"))
     names = labels["file_name"].values
 

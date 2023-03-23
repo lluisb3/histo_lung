@@ -23,7 +23,7 @@ thispath = Path(__file__).resolve()
 
 datadir = Path(thispath.parent.parent / "data")
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
 def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, preprocess, cfg, outputdir):
@@ -352,7 +352,7 @@ def main(config_file):
                             logging.StreamHandler()
                         ],
                         datefmt='%m/%d/%Y %I:%M:%S %p')
-    logging.info(f"CUDA current device {torch.cuda.current_device()}")
+    logging.info(f"CUDA current device {torch.device('cuda:0')}")
     logging.info(f"CUDA devices available {torch.cuda.device_count()}")
 
     # Seed for reproducibility
@@ -443,7 +443,8 @@ def main(config_file):
     preprocess = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=cfg.dataset.mean, std=cfg.dataset.stddev),
-        transforms.Resize(size=(model.resize_param, model.resize_param))
+        transforms.Resize(size=(model.resize_param, model.resize_param),
+        antialias=True)
     ])
 
     # Dataset and Dataloader

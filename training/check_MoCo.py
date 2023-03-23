@@ -8,7 +8,6 @@ from training import Encoder, ModelOption, yaml_load, cosine_similarity
 from database import Dataset_instance
 from torch.utils.data import DataLoader
 from torchvision import transforms
-import matplotlib.pyplot as plt
 from itertools import combinations
 from easydict import EasyDict as edict
 
@@ -39,13 +38,9 @@ moco_dim = cfg.training.moco_dim
 
 encoder = Encoder(model, dim=moco_dim).to(device)
 
-optimizer = getattr(torch.optim, cfg.training.optimizer)
-optimizer = optimizer(encoder.parameters(), **cfg.training.optimizer_args)
-
 # checkpoint = torch.load(modeldir / cfg.dataset.magnification / cfg.model.model_name / f"{experiment_name}.pt")
 checkpoint = torch.load(modeldir / cfg.dataset.magnification / cfg.model.model_name / "MoCo.pt")
 encoder.load_state_dict(checkpoint["encoder_state_dict"])
-optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 loss = checkpoint["loss"]
 epoch = checkpoint["epoch"] + 1
 

@@ -1,4 +1,4 @@
-experiment_name: MoCo_try_wandb
+experiment_name: MoCo_try_wandb_cpu
 model:
     model_name: "resnet50"
     num_classes: 4
@@ -14,8 +14,8 @@ dataset:
 
 dataloader:
     batch_size_bag: 16
-    batch_size: 256
-    num_workers: 8
+    batch_size: 1256
+    num_workers: 6
 
 data_augmentation:
     prob: 0.5

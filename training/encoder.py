@@ -18,7 +18,7 @@ class Encoder(torch.nn.Module):
         self.conv_layers = torch.nn.Sequential(*list(self.net.children())[:-1])
 
         if (torch.cuda.device_count()>1):
-            self.conv_layers = torch.nn.DataParallel(self.conv_layers)
+            self.conv_layers = torch.nn.DataParallel(self.conv_layers, device_ids=[0])
 
         if self.model.embedding_bool:
 
@@ -34,7 +34,7 @@ class Encoder(torch.nn.Module):
                 self.D = 128
                 self.K = self.num_classes
 
-            elif ('resnet152' in self.model.model_name):
+            elif ('resnet101' in self.model.model_name):
                 self.E = self.dim
                 self.L = self.E
                 self.D = 128

@@ -2,6 +2,9 @@ import torch
 from torch.utils.data import Dataset
 from pathlib import Path
 import pyspng
+from PIL import Image
+import numpy as np
+  
 thispath = Path(__file__).resolve()
 
 
@@ -20,8 +23,10 @@ class Dataset_instance(Dataset):
     def __getitem__(self, index):
         
         # Load the patch image saved as png (key)
-        with open(self.wsi_path_patches[index][0], 'rb') as fin:
-            key =  pyspng.load(fin.read())
+        # with open(self.wsi_path_patches[index][0], 'rb') as fin:
+        #     key =  pyspng.load(fin.read())
+        # open method used to open different extension image file
+        key = np.array(Image.open(self.wsi_path_patches[index][0]))  
 
         if self.transform:
             query = self.transform(image=key)['image']
