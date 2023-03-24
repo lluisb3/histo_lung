@@ -14,6 +14,8 @@ from easydict import EasyDict as edict
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 import seaborn as sns
+import time
+from utils import timer
 
 thispath = Path(__file__).resolve()
 
@@ -25,7 +27,7 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # Load PyTorch model
 experiment_name = "MoCo_try_Adam"
 
-modeldir = Path(thispath.parent.parent / "trained_models" / experiment_name)
+modeldir = Path(thispath.parent.parent / "trained_models" / "MoCo" / experiment_name)
 
 cfg = yaml_load(modeldir / f"config_{experiment_name}.yml")
 
@@ -53,7 +55,7 @@ print(f"Loaded encoder using as backbone {cfg.model.model_name} with a best loss
 # Load patches
 pyhistdir = Path(datadir / "Mask_PyHIST_v2")
 
-dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
+dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv") if "LungAOEC" in str(i)])
 
 number_patches = 0
 path_patches = []
@@ -70,39 +72,46 @@ preprocess = transforms.Compose([
         antialias=True)
     ])
 
-params_instance = {'batch_size': 1,
+params_instance = {'batch_size': 1035,
                    'shuffle': False,
                    'pin_memory': True,
-                   'num_workers': 2}
+                   'num_workers': 8}
 
 instances = Dataset_instance(path_patches, transform=None, preprocess=preprocess)
 generator = DataLoader(instances, **params_instance)
 
 encoder.eval()
+# feature_patches_dict = {}
 feature_matrix = np.zeros([len(path_patches), moco_dim])
+start = time.time()
 with torch.no_grad():
     
-    for i, (x_q, x_k) in enumerate(generator):
+    for i, (x_q, x_k) in tqdm(enumerate(generator)):
 
         x_q, x_k = x_q.to(device, non_blocking=True), x_k.to(device, non_blocking=True)
 
         q = encoder(x_q)
         q = q.squeeze().cpu().numpy()
-        feature_matrix[i, :] = q
+        feature_matrix[i*1035:(i+1)*1035, :] = q
+        # name = str(path_patches[i]).split("/")[-1]
+        # print(name)
+        # feature_patches_dict[name] = q
 
+df_feature = pd.DataFrame(feature_matrix)
+df_feature.to_csv(Path(datadir / "features.csv"))
+timer(start=start, end=time.time())
+# pca = PCA(n_components=20)
+# pca_features = pca.fit_transform(feature_matrix)
 
-pca = PCA(n_components=20)
-pca_features = pca.fit_transform(feature_matrix)
+# print(f"Explained variation per principal component: {pca.explained_variance_ratio_}")
 
-print(f"Explained variation per principal component: {pca.explained_variance_ratio_}")
+# tsne = TSNE(perplexity=30, learning_rate='auto', init='pca', verbose=1)
+# tsne_features = tsne.fit_transform(pca_features)
 
-tsne = TSNE(perplexity=30, learning_rate='auto', init='pca', verbose=1)
-tsne_features = tsne.fit_transform(pca_features)
+# tsne_df = pd.DataFrame()
 
-tsne_df = pd.DataFrame()
+# tsne_df['x'] = tsne_features[:, 0]
+# tsne_df['y'] = tsne_features[:, 1]
+# sns.scatterplot(x='x', y='y', data=tsne_df)
 
-tsne_df['x'] = tsne_features[:, 0]
-tsne_df['y'] = tsne_features[:, 1]
-sns.scatterplot(x='x', y='y', data=tsne_df)
-
-plt.savefig(datadir / "scaterplot.png")
+# plt.savefig(datadir / "scaterplot.png")

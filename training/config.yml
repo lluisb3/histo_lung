@@ -1,6 +1,6 @@
-experiment_name: MoCo_try_wandb_cpu
+experiment_name: MoCo_try_cpu_256_resnet34
 model:
-    model_name: "resnet50"
+    model_name: "resnet34"
     num_classes: 4
     freeze_weights: False
     num_frozen_layers: 0
@@ -14,7 +14,7 @@ dataset:
 
 dataloader:
     batch_size_bag: 16
-    batch_size: 1256
+    batch_size: 256
     num_workers: 6
 
 data_augmentation:

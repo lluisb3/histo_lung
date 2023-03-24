@@ -326,13 +326,9 @@ def main(config_file):
     # Read the configuration file
     configdir = Path(thispath.parent / f"{config_file}.yml")
     cfg = yaml_load(configdir)
-    # config_path = str(thispath.parent / 'config.yml')
-    # print(f"With configuration file in: {config_path}")
-    # with open(config_path, "r") as ymlfile:
-    #     cfg = yaml.safe_load(ymlfile)
 
     # Create directory to save the resuls
-    outputdir = Path(thispath.parent.parent / "trained_models" / f"{cfg.experiment_name}")
+    outputdir = Path(thispath.parent.parent / "trained_models" / "MoCo" / f"{cfg.experiment_name}")
     Path(outputdir).mkdir(exist_ok=True, parents=True)
 
     # wandb login
@@ -361,7 +357,6 @@ def main(config_file):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
-    
 
     # Load pretrained model
 
@@ -373,7 +368,6 @@ def main(config_file):
                 embedding_bool=cfg.model.embedding_bool
                 )    
 
-    
     # Encoder and momentum encoder
     moco_dim = cfg.training.moco_dim
 
@@ -439,7 +433,7 @@ def main(config_file):
         ])
 
         
-    #DATA NORMALIZATION
+    # Data normalization
     preprocess = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=cfg.dataset.mean, std=cfg.dataset.stddev),
@@ -461,9 +455,6 @@ def main(config_file):
     # criterion = getattr(torch.nn, cfg.training.criterion)()
 
     # Optimizer
-    # cfg.training.optimizer_args.betas = eval(cfg.training.optimizer_args.betas)
-    # cfg.training.optimizer_args.eps = eval(cfg.training.optimizer_args.eps)
-    # cfg.training.optimizer_args.weight_decay = eval(cfg.training.optimizer_args.weight_decay)
 
     optimizer = getattr(torch.optim, cfg.training.optimizer)
     optimizer = optimizer(encoder.parameters(), **cfg.training.optimizer_args)

@@ -8,7 +8,9 @@ class ModelOption():
                  freeze=False,
                  num_freezed_layers=0,
                  dropout=0.0, 
-                 embedding_bool=False):
+                 embedding_bool=False,
+                 pool_algorithm=None
+                 ):
 
         self.model_name = model_name
         self.num_classes = num_classes
@@ -16,6 +18,7 @@ class ModelOption():
         self.num_freezed_layers = num_freezed_layers
         self.dropout = dropout
         self.embedding_bool = embedding_bool
+        self.pool_algorithm = pool_algorithm
 
         if self.model_name.lower() == "resnet50":
             """ ResNet50 """
@@ -50,7 +53,7 @@ class ModelOption():
 
             self.resize_param = 224
 
-        if self.model_name.lower() == "resnet34":
+        elif self.model_name.lower() == "resnet34":
             """ ResNet34 """
             self.net = models.resnet34(weights=models.ResNet34_Weights.DEFAULT)
 
@@ -83,7 +86,7 @@ class ModelOption():
 
             self.resize_param = 224
 
-        if self.model_name.lower() == "resnet101":
+        elif self.model_name.lower() == "resnet101":
             """ ResNet101 """
             self.net = models.resnet101(weights=models.ResNet101_Weights.DEFAULT)
 
