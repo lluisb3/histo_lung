@@ -8,12 +8,6 @@ from training import Encoder, ModelOption, yaml_load
 from database import Dataset_instance
 from torch.utils.data import DataLoader
 from torchvision import transforms
-import matplotlib.pyplot as plt
-from itertools import combinations
-from easydict import EasyDict as edict
-from sklearn.manifold import TSNE
-from sklearn.decomposition import PCA
-import seaborn as sns
 import time
 from utils import timer
 import click
@@ -109,7 +103,7 @@ def MoCo_features(exp_name):
 @click.command()
 @click.option(
     "--exp_name",
-    default="MoCo_Adam_try",
+    default="MoCo_try_Adam",
     prompt="Name of the MoCo model to extrcat features",
     help="Name of the MoCo model to extrcat features",
 )

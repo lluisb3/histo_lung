@@ -246,96 +246,106 @@ model_weights_filename_CNN = outputdir+'MIL_model_'+TASK+'.pt'
 model_weights_filename_CNN_temp = outputdir+'MIL_model_'+TASK+'_temp.pt'
 model_weights_filename_checkpoint = outputdir+'checkpoint.pt'
 
-#path model file
-experiment_name = "MoCo_try_Adam"
 
-mocodir = Path(thispath.parent.parent / 
-               "trained_models" / 
-               "MoCo" / 
-               experiment_name)
+# MoCo model maybe not necesary if lodaded features directly
+# #path model file
+# experiment_name = "MoCo_try_Adam"
 
-cfg_moco = yaml_load(mocodir / f"config_{experiment_name}.yml")
+# mocodir = Path(thispath.parent.parent / 
+#                "trained_models" / 
+#                "MoCo" / 
+#                experiment_name)
 
-model_moco = ModelOption(cfg.model.model_name,
-                cfg.model.num_classes,
-                freeze=cfg.model.freeze_weights,
-                num_freezed_layers=cfg.model.num_frozen_layers,
-                dropout=cfg.model.dropout,
-                embedding_bool=cfg.model.embedding_bool
-                )    
+# cfg_moco = yaml_load(mocodir / "config_{experiment_name}.yml")
 
-# Encoder and momentum encoder
-moco_dim = cfg_moco.training.moco_dim
+# model_moco = ModelOption(cfg.model.model_name,
+#                 cfg.model.num_classes,
+#                 freeze=cfg.model.freeze_weights,
+#                 num_freezed_layers=cfg.model.num_frozen_layers,
+#                 dropout=cfg.model.dropout,
+#                 embedding_bool=cfg.model.embedding_bool
+#                 )    
 
-encoder = Encoder(model_moco, dim=moco_dim).to(device)
+# # Encoder and momentum encoder
+# moco_dim = cfg_moco.training.moco_dim
 
-checkpoint_moco = torch.load(Path(mocodir /
-                             cfg_moco.dataset.magnification / 
-                             cfg_moco.model.model_name / 
-                             "MoCo.pt"))
-encoder.load_state_dict(checkpoint_moco["encoder_state_dict"])
-loss_moco = checkpoint_moco["loss"]
-epoch_moco = checkpoint_moco["epoch"] + 1
+# encoder = Encoder(model_moco, dim=moco_dim).to(device)
 
-print(f"Loaded encoder using as backbone {model_moco.model_name} with a best"
-      f"loss of {loss_moco} at Epoch {epoch_moco}")
+# checkpoint_moco = torch.load(Path(mocodir /
+#                              cfg_moco.dataset.magnification / 
+#                              cfg_moco.model.model_name / 
+#                              "MoCo.pt"))
+# encoder.load_state_dict(checkpoint_moco["encoder_state_dict"])
+# loss_moco = checkpoint_moco["loss"]
+# epoch_moco = checkpoint_moco["epoch"] + 1
 
-pyhistdir = Path(datadir / "Mask_PyHIST_v2")
+# print(f"Loaded encoder using as backbone {model_moco.model_name} with a best"
+#       f"loss of {loss_moco} at Epoch {epoch_moco}")
 
-dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv") if "LungAOEC" in str(i)])
+# preprocess_moco = transforms.Compose([
+#         transforms.ToTensor(),
+#         transforms.Normalize(mean=cfg_moco.dataset.mean, std=cfg_moco.dataset.stddev),
+#         transforms.Resize(size=(model_moco.resize_param, model_moco.resize_param),
+#         antialias=True)
+#     ])
 
-number_patches = 0
-path_patches = {}
-for wsi_patches in tqdm(dataset_path, desc="Selecting patches to extract features"):
+# params_dataloader_moco = {'batch_size': 1,
+#                           'shuffle': False,
+#                           'pin_memory': True,
+#                           'num_workers': 2}
 
-    csv_instances = pd.read_csv(wsi_patches).to_numpy()
+# patches_dataset = Dataset_instance(path_patches, transform=None, preprocess=preprocess_moco)
+# generator = DataLoader(patches_dataset, **params_dataloader_moco)
+
+# encoder.eval()
+# feature_patches_dict = {}
+# with torch.no_grad():
     
-    number_patches = number_patches + len(csv_instances)
-    name = wsi_patches.parent.stem
-    path_patches[name] = csv_instances
+#     for i, (x_q, x_k) in enumerate(generator):
 
-logging.info(f"Total number of patches for train/validation {number_patches}")
+#         x_q, x_k = x_q.to(device, non_blocking=True), x_k.to(device, non_blocking=True)
 
-preprocess_moco = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=cfg_moco.dataset.mean, std=cfg_moco.dataset.stddev),
-        transforms.Resize(size=(model_moco.resize_param, model_moco.resize_param),
-        antialias=True)
-    ])
+#         q = encoder(x_q)
+#         q = q.squeeze().cpu().numpy()
+#         feature_patches_dict[path_patches.stem[i]] = q
 
-params_dataloader_moco = {'batch_size': 1,
-                          'shuffle': False,
-                          'pin_memory': True,
-                          'num_workers': 2}
-
-patches_dataset = Dataset_instance(path_patches, transform=None, preprocess=preprocess_moco)
-generator = DataLoader(patches_dataset, **params_dataloader_moco)
-
-encoder.eval()
-feature_patches_dict = {}
-with torch.no_grad():
-    
-    for i, (x_q, x_k) in enumerate(generator):
-
-        x_q, x_k = x_q.to(device, non_blocking=True), x_k.to(device, non_blocking=True)
-
-        q = encoder(x_q)
-        q = q.squeeze().cpu().numpy()
-        feature_patches_dict[path_patches.stem[i]] = q
-
-# Loading csv with data split
+# Loading Data Spit
 k = 10
 
 data_split = pd.read_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split.csv"), index_col=0)
+train_dataset_k = []
+validation_dataset_k = []
+train_labels_k = []
+validation_labels_k = []
 
 for fold, _ in data_split.iterrows():
     train_dataset = literal_eval(data_split.loc[fold]["images_train"])
     validation_dataset = literal_eval(data_split.loc[fold]["images_test"])
     train_labels = literal_eval(data_split.loc[fold]["labels_train"])
     validation_labels = literal_eval(data_split.loc[fold]["labels_test"])
+    train_dataset_k.append(train_dataset)
+    validation_dataset_k.append(validation_dataset)
+    train_labels_k.append(train_labels)
+    validation_labels_k.append(validation_labels)
 
-# Test data
+# Load patches path
 
+# Train and validation
+pyhistdir = Path(datadir / "Mask_PyHIST_v2")
+
+dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv") if "LungAOEC" in str(i)])
+
+path_patches = {}
+for wsi_patches in tqdm(dataset_path, desc="Selecting patches to extract features"):
+
+    csv_instances = pd.read_csv(wsi_patches).to_numpy()
+    
+    name = wsi_patches.parent.stem
+    path_patches[name] = csv_instances
+
+logging.info(f"Total number of patches for train/validation {len(path_patches)}")
+
+# Test
 test_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv") if "Lung" in str(i) and "LungAOEC" not in str(i)])
 
 path_patches_test = {}
@@ -371,6 +381,17 @@ training_generator_bag = DataLoader(training_set_bag, **params_train_bag)
 validation_set_bag = Dataset_bag_MIL(validation_dataset[:,0], validation_dataset[:,1:])
 validation_generator_bag = DataLoader(validation_set_bag, **params_valid_bag)
 
+# Load features from MoCo model
+experiment_name = "MoCo_try_Adam"
+
+mocodir = Path(thispath.parent.parent / 
+               "trained_models" / 
+               "MoCo" / 
+               experiment_name)
+
+df_features = pd.read_csv(mocodir / f"features_{experiment_name}.csv", index_col=0)
+
+# Initialize Bert Tokenizer
 logging.info("== Initialize BERT ==")
 bert_chosen = 'emilyalsentzer/Bio_ClinicalBERT'
 tokenizer = BertTokenizer.from_pretrained(bert_chosen)  
@@ -379,7 +400,6 @@ clinical_bert_token_size = 768
 #print(tokenizer)
 
 # Load pretrained model
-
 model = ModelOption(cfg.model.model_name,
             cfg.model.num_classes,
             freeze=cfg.model.freeze_weights,
@@ -390,8 +410,6 @@ model = ModelOption(cfg.model.model_name,
             )
 
 hidden_space_len = cfg.model.hidden_space_len
-
-
 
 net = MIL_model(model, hidden_space_len)
 
@@ -477,7 +495,6 @@ optimizer = optimizer(net.parameters(), **cfg.training.optimizer_args)
 #optimizer_CNN = AdamW(optimizer_grouped_parameters_CNN,lr = lr,eps=1e-8)
 
 
-
 def evaluate_validation_set(net, generator):
     #accumulator for validation set
     y_pred = []
@@ -486,7 +503,6 @@ def evaluate_validation_set(net, generator):
     validation_loss = 0.0
 
     net.eval()
-
 
     with torch.no_grad():
         for wsi_id, labels in generator:
@@ -497,10 +513,6 @@ def evaluate_validation_set(net, generator):
 
             print("[" + str(i) + "/" + str(len(train_dataset)) + "], " + "inputs_bag: " + str(wsi_id))
             print("labels: " + str(label_wsi))
-
-
-            filename_features = '/home/niccolo/ExamodePipeline/Colon_WSI_patches/magnifications/'+'magnification_10x/'+filename_wsi+'/'+filename_wsi+'_features_'+MoCo_TO_USE+'.npy'
-            #filename_features = '/home/niccolo/ExamodePipeline/Colon_WSI_patches/magnifications/'+'magnification_10x/'+filename_wsi+'/'+filename_wsi+'_features.npy'
 
             with open(filename_features, 'rb') as f:
                 features_np = np.load(f)

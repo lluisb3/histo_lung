@@ -25,15 +25,18 @@ def data_splits(k, test_size):
     csv_dataset_AOEC = Path(datadir / "labels.csv")
 
     # read data
-    dataset_AOEC = pd.read_csv(csv_dataset_AOEC, sep=',', header=0).values
+    dataset_AOEC = pd.read_csv(csv_dataset_AOEC,
+                               sep=',', 
+                               header=0, 
+                               index_col=0, 
+                               dtype={'image_num':str})
 
     mskf = MultilabelStratifiedShuffleSplit(n_splits=k,
                                             test_size=test_size,
                                             random_state=33)
 
-    images = dataset_AOEC[:, 0]
-
-    labels = dataset_AOEC[:, 1:]
+    images = dataset_AOEC.index
+    labels = dataset_AOEC.values
 
     header = ["images_train", "images_test", "labels_train", "labels_test"]
     folds = pd.DataFrame(columns=header)
@@ -49,6 +52,7 @@ def data_splits(k, test_size):
     print(f"Datasplit labels TRAIN: {np.sum(labels_train, axis=0)}"
           f"Datasplit labels TEST: {np.sum(labels_test, axis=0)}")
 
+    folds.index.name='fold'
     folds.to_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split.csv"))
 
     print(f"{k}_fold_crossvalidation_data_split.csv in {datadir}")
