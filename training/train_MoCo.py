@@ -43,10 +43,7 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
         number_patches = number_patches + len(csv_instances)
         path_patches.extend(csv_instances)
 
-    logging.info(f"Total number of patches {number_patches}")
-
-    # Load hyperparameters
-    moco_m = cfg.training.moco_m
+    logging.info(f"Total number of patches {number_patches}")o    moco_m = cfg.training.moco_m
     temperature = cfg.training.temperature
     num_keys = cfg.training.num_keys
     batch_size = cfg.dataloader.batch_size

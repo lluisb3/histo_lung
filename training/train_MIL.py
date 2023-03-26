@@ -347,7 +347,7 @@ for wsi_patches in tqdm(test_path, desc="Selecting patches to extract features")
     name = wsi_patches.parent.stem
     path_patches_test[name] = csv_instances
 
-logging.info(f"Total number of patches for test{number_patches}")
+logging.info(f"Total number of patches for test {path_patches_test}")
 
 # Load datasets
 batch_size_bag = 1
