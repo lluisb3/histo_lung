@@ -242,11 +242,6 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed_all(seed)
 np.random.seed(seed)
 
-model_weights_filename_CNN = outputdir+'MIL_model_'+TASK+'.pt'
-model_weights_filename_CNN_temp = outputdir+'MIL_model_'+TASK+'_temp.pt'
-model_weights_filename_checkpoint = outputdir+'checkpoint.pt'
-
-
 # MoCo model maybe not necesary if lodaded features directly
 # #path model file
 # experiment_name = "MoCo_try_Adam"
@@ -294,7 +289,7 @@ model_weights_filename_checkpoint = outputdir+'checkpoint.pt'
 #                           'pin_memory': True,
 #                           'num_workers': 2}
 
-# patches_dataset = Dataset_instance(path_patches, transform=None, preprocess=preprocess_moco)
+# patches_dataset = Dataset_instance(patches_path, transform=None, preprocess=preprocess_moco)
 # generator = DataLoader(patches_dataset, **params_dataloader_moco)
 
 # encoder.eval()
@@ -307,7 +302,7 @@ model_weights_filename_checkpoint = outputdir+'checkpoint.pt'
 
 #         q = encoder(x_q)
 #         q = q.squeeze().cpu().numpy()
-#         feature_patches_dict[path_patches.stem[i]] = q
+#         feature_patches_dict[patches_path.stem[i]] = q
 
 # Loading Data Spit
 k = 10
@@ -319,45 +314,61 @@ train_labels_k = []
 validation_labels_k = []
 
 for fold, _ in data_split.iterrows():
-    train_dataset = literal_eval(data_split.loc[fold]["images_train"])
-    validation_dataset = literal_eval(data_split.loc[fold]["images_test"])
-    train_labels = literal_eval(data_split.loc[fold]["labels_train"])
-    validation_labels = literal_eval(data_split.loc[fold]["labels_test"])
-    train_dataset_k.append(train_dataset)
-    validation_dataset_k.append(validation_dataset)
-    train_labels_k.append(train_labels)
-    validation_labels_k.append(validation_labels)
+    train_wsi = literal_eval(data_split.loc[fold]["images_train"])
+    validation_wsi = literal_eval(data_split.loc[fold]["images_test"])
+    labels_traidata_split = pd.read_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split.csv"), index_col=0)n = literal_eval(data_split.loc[fold]["labels_train"])
+    labels_validation = literal_eval(data_split.loc[fold]["labels_test"])
+    train_dataset_k.append(train_wsi)
+    validation_dataset_k.append(validation_wsi)
+    train_labels_k.append(labels_train)
+    validation_labels_k.append(labels_validation)
+
+# Load fold 0
+train_dataset = train_dataset_k[0]
+validation_dataset = validation_dataset_k[0]
+train_labels = train_labels_k[0]
+validation_labels = validation_labels_k[0]
+
+test_csv = pd.read_csv(Path(datadir / f"labels_test.csv"), index_col=0)
+test_dataset = test_csv.index
+test_dataset = [i.replace("/", "-") for i in test_dataset]
+test_labels = test_csv.values
 
 # Load patches path
-
-# Train and validation
 pyhistdir = Path(datadir / "Mask_PyHIST_v2")
 
-dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv") if "LungAOEC" in str(i)])
+dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
 
-path_patches = {}
+patches_path = {}
+patches_names = {}
 for wsi_patches in tqdm(dataset_path, desc="Selecting patches to extract features"):
 
     csv_instances = pd.read_csv(wsi_patches).to_numpy()
     
     name = wsi_patches.parent.stem
-    path_patches[name] = csv_instances
+    patches_path[name] = csv_instances
+    patches_names[name] = []
 
-logging.info(f"Total number of patches for train/validation {len(path_patches)}")
+    for instance in csv_instances:
+            patches_names[name].append(str(instance).split("/")[-1])
 
-# Test
-test_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv") if "Lung" in str(i) and "LungAOEC" not in str(i)])
+logging.info(f"Total number of patches for train/validation/test {len(patches_path)}")
 
-path_patches_test = {}
-for wsi_patches in tqdm(test_path, desc="Selecting patches to extract features"):
+patches_train = []
+patches_validation = []
+patches_test = []
+for value, key in zip(patches_names.values(), patches_path.keys()):
+        
+    if key in train_dataset:
+        patches_train.extend(value)
+    if key in validation_dataset:
+        patches_validation.extend(value)
+    if key in test_dataset:
+        patches_test.extend(value)
 
-    csv_instances = pd.read_csv(wsi_patches).to_numpy()
-    
-    number_patches = number_patches + len(csv_instances)
-    name = wsi_patches.parent.stem
-    path_patches_test[name] = csv_instances
-
-logging.info(f"Total number of patches for test {path_patches_test}")
+logging.info(f"Total number of patches for train {len(patches_train)}")
+logging.info(f"Total number of patches for validation {len(patches_validation)}")
+logging.info(f"Total number of patches for test {len(patches_test)}")
 
 # Load datasets
 batch_size_bag = 1
@@ -390,6 +401,10 @@ mocodir = Path(thispath.parent.parent /
                experiment_name)
 
 df_features = pd.read_csv(mocodir / f"features_{experiment_name}.csv", index_col=0)
+
+features_train = df_features.loc[patches_train]
+features_valid = df_features.loc[patches_validation]
+features_test = df_features.loc[patches_test]
 
 # Initialize Bert Tokenizer
 logging.info("== Initialize BERT ==")
@@ -654,7 +669,7 @@ while (epoch<cfg.training.epochs and early_stop_cont<early_stop):
         instances = Dataset_instance_MIL(csv_instances,mode,pipeline_transform)
         generator = DataLoader(instances, **params_instance)
 
-		net.eval()
+        net.eval()
 
         features = []
         with torch.no_grad():
@@ -755,6 +770,16 @@ while (epoch<cfg.training.epochs and early_stop_cont<early_stop):
     df = pd.DataFrame(File,columns=['n_classes','lr','embedding','modality'])
     np.savetxt(filename_hyperparameters, df.values, fmt='%s',delimiter=',')
 
+    # Create directories for the outputs
+    outputdir_results = Path(outputdir /
+                                cfg.dataset.magnification / 
+                                cfg.model.model_name)
+    Path(outputdir_results).mkdir(exist_ok=True, parents=True)
+
+    model_filename = Path(outputdir_results / f"{cfg.experiment_name}.pt")
+    model_filename_temp = Path(outputdir_results / f"{cfg.experiment_name}_temporary.pt")
+    model_weights_filename_checkpoint = Path(outputdir_results /'checkpoint.pt')
+
     if (epoch>=THRESHOLD_CLASSIFICATION):
         if (best_loss>valid_loss):
             early_stop_cont = 0
@@ -763,14 +788,14 @@ while (epoch<cfg.training.epochs and early_stop_cont<early_stop):
             best_loss = valid_loss
 
             try:
-                torch.save(net.state_dict(), model_weights_filename_CNN,_use_new_zipfile_serialization=False)
+                torch.save(net.state_dict(), model_filename,_use_new_zipfile_serialization=False)
             except:
                 try:
-                    torch.save(net.state_dict(), model_weights_filename_CNN)    
+                    torch.save(net.state_dict(), model_filename)    
                 except:
-                    torch.save(net, model_weights_filename_CNN)
+                    torch.save(net, model_filename)
 
-            filename_training_predictions = checkpoint_path+'training_predictions_best.csv'
+            filename_training_predictions = Path(outputdir_results / 'training_predictions_best.csv')
 
             File = {'filenames':filenames_wsis, 'pred_cancers':pred_cancers, 'pred_hgd':pred_hgd,'pred_lgd':pred_lgd, 'pred_hyper':pred_hyper, 'pred_normal':pred_normal}
 

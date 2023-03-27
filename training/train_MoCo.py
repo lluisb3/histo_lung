@@ -23,10 +23,10 @@ thispath = Path(__file__).resolve()
 
 datadir = Path(thispath.parent.parent / "data")
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, preprocess, cfg, outputdir):
+def train(encoder, momentum_encoder, optimizer, transform, preprocess, cfg, outputdir):
     # Training
     logging.info("== Start training ==")
     start_time = time.time()
@@ -43,7 +43,8 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
         number_patches = number_patches + len(csv_instances)
         path_patches.extend(csv_instances)
 
-    logging.info(f"Total number of patches {number_patches}")o    moco_m = cfg.training.moco_m
+    logging.info(f"Total number of patches {number_patches}")
+    moco_m = cfg.training.moco_m
     temperature = cfg.training.temperature
     num_keys = cfg.training.num_keys
     batch_size = cfg.dataloader.batch_size
@@ -307,8 +308,8 @@ def train(dataloader_bag, optimizer, encoder, momentum_encoder, transform, prepr
     logging.info(f"Best loss: {best_loss} at {best_epoch + 1} and total iters {best_total_iters}")
 
     # Save model as onnx
-    encoder.to_onnx()
-    wandb.save(f"{cfg.experiment_name}.onnx")
+    # encoder.to_onnx()
+    # wandb.save(f"{cfg.experiment_name}.onnx")
 
 
 @click.command()
@@ -440,13 +441,13 @@ def main(config_file):
 
     # Dataset and Dataloader
     # Load CSV with WSI IDs
-    train_dataset = pd.read_csv(Path(datadir / "labels.csv"), index_col=0)
+    # train_dataset = pd.read_csv(Path(datadir / "labels.csv"), index_col=0)
 
-    params_train_bag = {'batch_size': cfg.dataloader.batch_size_bag,
-		'shuffle': True}
+    # params_train_bag = {'batch_size': cfg.dataloader.batch_size_bag,
+	# 	'shuffle': True}
 
-    training_set_bag = Dataset_bag(train_dataset.index.values, train_dataset.values)
-    training_generator_bag = DataLoader(training_set_bag, **params_train_bag)
+    # training_set_bag = Dataset_bag(train_dataset.index.values, train_dataset.values)
+    # training_generator_bag = DataLoader(training_set_bag, **params_train_bag)
 
     # Loss function
     # criterion = getattr(torch.nn, cfg.training.criterion)()
@@ -469,10 +470,9 @@ def main(config_file):
     torch.backends.cudnn.benchmark=True
 
     # Start training
-    train(training_generator_bag,
-          optimizer,
-          encoder, 
+    train(encoder, 
           momentum_encoder,
+          optimizer,
           pipeline_transform, 
           preprocess, 
           cfg,

@@ -52,7 +52,7 @@ def data_splits(k, test_size):
     print(f"Datasplit labels TRAIN: {np.sum(labels_train, axis=0)}"
           f"Datasplit labels TEST: {np.sum(labels_test, axis=0)}")
 
-    folds.index.name='fold'
+    folds.index.name = "fold"
     folds.to_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split.csv"))
 
     print(f"{k}_fold_crossvalidation_data_split.csv in {datadir}")

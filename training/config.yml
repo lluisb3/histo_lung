@@ -1,4 +1,4 @@
-experiment_name: MoCo_try_cpu_256_resnet34
+experiment_name: MoCo_try_DataParalelization
 model:
     model_name: "resnet34"
     num_classes: 4

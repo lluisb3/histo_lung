@@ -15,15 +15,20 @@ def labels_from_json_he():
     json_files = [i for i in datadir.rglob("*.json") if "lung_data" in str(i)]
 
     he_csv = np.squeeze(pd.read_csv(Path(datadir / "lung_data" / "he_images.csv")).to_numpy())
-
+    test_csv = np.squeeze(pd.read_csv(Path(datadir / "lung_data" / "test_images.csv")).to_numpy())
+    
     clean_he_csv = [i[4:-4] for i in he_csv]
+    clean_test_csv = [i[:-4].replace("-", "/") for i in test_csv]
 
     he_json = []
+    test_json = []
     for file in json_files:
         f = open(file)
         data =json.load(f)
         matches = [i for i in data.keys() if i.split("_")[0] in clean_he_csv]
+        matches_test = [i for i in data.keys() if i in clean_test_csv]
         he_json.extend(matches)
+        test_json.extend(matches_test)
         f.close()
 
     if len(he_json) > len(clean_he_csv):
@@ -43,18 +48,20 @@ def labels_from_json_he():
 
         # Eliminate images repeated between JSON files
         he_json = np.unique(he_json)
+        test_json = np.unique(test_json)
 
         # Obtain levels from JSON files from images contained in the he_images.csv
         labels_he = {}
+        labels_test = {}
         for file in json_files:
             f = open(file)
             data =json.load(f)
             for num, labels in zip(data, data.values()):
                 if num in he_json:
                     labels_he[num] = labels
-                        
+                if num in test_json:
+                    labels_test[num] = labels     
             f.close()
-
 
         labels_df = pd.DataFrame.from_dict(labels_he, orient="index") 
         labels_df.sort_index(inplace=True)
@@ -66,7 +73,10 @@ def labels_from_json_he():
         labels_df.drop("cancer_nscc_large", inplace=True, axis=1)
         labels_df.to_csv(Path(datadir / "labels.csv"), header=True, index_label="image_num")
 
-
+        labels_df_test = pd.DataFrame.from_dict(labels_test, orient="index") 
+        labels_df_test.sort_index(inplace=True)
+        labels_df_test.drop("cancer_nscc_large", inplace=True, axis=1)
+        labels_df_test.to_csv(Path(datadir / "labels_test.csv"), header=True, index_label="image_num")
 
         print(f"Labels from JSON files created in {datadir} for HE ink")
 

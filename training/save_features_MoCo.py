@@ -42,7 +42,10 @@ def MoCo_features(exp_name):
     encoder = Encoder(model, dim=moco_dim).to(device)
 
     # checkpoint = torch.load(modeldir / cfg.dataset.magnification / cfg.model.model_name / f"{experiment_name}.pt")
-    checkpoint = torch.load(modeldir / cfg.dataset.magnification / cfg.model.model_name / "MoCo.pt")
+    checkpoint = torch.load(modeldir /
+                            cfg.dataset.magnification / 
+                            cfg.model.model_name / 
+                            f"{cfg.experiment_name}.pt")
     encoder.load_state_dict(checkpoint["encoder_state_dict"])
     loss = checkpoint["loss"]
     epoch = checkpoint["epoch"] + 1
@@ -52,9 +55,8 @@ def MoCo_features(exp_name):
     # Load patches
     pyhistdir = Path(datadir / "Mask_PyHIST_v2")
 
-    dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv") if "LungAOEC" in str(i)])
+    dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
 
-    number_patches = 0
     path_patches = []
     patches_names = []
     for wsi_patches in tqdm(dataset_path, desc="Selecting patches to check model"):
@@ -72,10 +74,10 @@ def MoCo_features(exp_name):
             antialias=True)
         ])
 
-    params_instance = {'batch_size': 1035,
+    params_instance = {'batch_size': 1024,
                        'shuffle': False,
                        'pin_memory': True,
-                       'num_workers': 5}
+                       'num_workers': 2}
 
     instances = Dataset_instance(path_patches, transform=None, preprocess=preprocess)
     generator = DataLoader(instances, **params_instance)
@@ -91,10 +93,11 @@ def MoCo_features(exp_name):
 
             q = encoder(x_q)
             q = q.squeeze().cpu().numpy()
-
-            feature_matrix[i*1035:(i+1)*1035, :] = q
+            print(len(q))
+            feature_matrix[i*len(q):(i+1)*len(q), :] = q
 
     df_feature = pd.DataFrame(feature_matrix, index=patches_names, columns=range(moco_dim))
+    df_feature.index.name = "patch_name"
     df_feature.to_csv(Path(modeldir / f"features_{experiment_name}.csv"))
     message = timer(start=start, end=time.time())
     print(message)
@@ -103,7 +106,7 @@ def MoCo_features(exp_name):
 @click.command()
 @click.option(
     "--exp_name",
-    default="MoCo_try_Adam",
+    default="MoCo_experiment_name",
     prompt="Name of the MoCo model to extrcat features",
     help="Name of the MoCo model to extrcat features",
 )
