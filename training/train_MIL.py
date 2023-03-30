@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import albumentations as A
 import time
-import tqdm
+from tqdm import tqdm
 import torch.nn.functional as F
 import torch.utils.data
 from torchvision import transforms
@@ -30,9 +30,7 @@ from training.utils_trainig import yaml_load, initialize_wandb, edict2dict
 from utils import timer
 import wandb
 import logging
-
-#from pytorch_pretrained_bert.modeling import BertModel
-import pyspng
+import click
 
 thispath = Path(__file__).resolve()
 
@@ -40,62 +38,10 @@ datadir = Path(thispath.parent.parent / "data")
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-args = sys.argv[1:]
-
-print("CUDA current device " + str(torch.cuda.current_device()))
-print("CUDA devices available " + str(torch.cuda.device_count()))
-
-#parser parameters
-parser = argparse.ArgumentParser(description='Configurations to train models.')
-parser.add_argument('-n', '--N_EXP', help='number of experiment',type=int, default=0)
-parser.add_argument('-c', '--CNN', help='cnn_to_use',type=str, default='resnet34')
-parser.add_argument('-b', '--BATCH_SIZE', help='batch_size',type=int, default=512)
-parser.add_argument('-e', '--EPOCHS', help='epochs to train',type=int, default=15)
-parser.add_argument('-p', '--pool', help='pooling algorithm',type=str, default='att')
-parser.add_argument('-t', '--TASK', help='task (binary/multilabel)',type=str, default='multilabel')
-parser.add_argument('-m', '--MAG', help='magnification to select',type=str, default='10')
-parser.add_argument('-f', '--features', help='features_to_use: embedding (True) or features from CNN (False)',type=str, default='True')
-parser.add_argument('-z', '--ausiliary', help='loss to match embeddings: mse, cosine, l1, cosine_mse',type=str, default='semi_supervised')
-parser.add_argument('-g', '--activation', help='tahn/relu',type=str, default='tanh')
-parser.add_argument('-a', '--preprocessed', help='pre-processed data: True False',type=str, default='False')
-parser.add_argument('-x', '--encoding', help='multiclass/multilabel',type=str, default='multilabel')
-parser.add_argument('-d', '--DATA', help='data to use: main/finetune/pretraining/finetune_pretrain',type=str, default='main')
-parser.add_argument('-w', '--WEIGHTS', help='pre-trained weights to use',type=str, default='moco2')
-parser.add_argument('-r', '--MODALITY', help='multimodal/unimodal',type=str, default='multimodal')
-
-args = parser.parse_args()
-
-N_EXP = args.N_EXP
-N_EXP_str = str(N_EXP)
-CNN_TO_USE = args.CNN
-BATCH_SIZE = args.BATCH_SIZE
-BATCH_SIZE_str = str(BATCH_SIZE)
-pool_algorithm = args.pool
-TASK = args.TASK
-MAGNIFICATION = args.MAG
-EMBEDDING_bool = args.features
-EPOCHS = args.EPOCHS
-EPOCHS_str = EPOCHS
-LOSS_EMBEDDINGS = args.ausiliary 
-GATED_bool = False
-PREPROCESSED_DATA = args.preprocessed
-ENCODING = args.encoding
-flag_dataset = args.DATA
-FLAG_CLASSIFIER = True
-pre_trained_weights = args.WEIGHTS
-MODALITY = args.MODALITY
-ACTIVATION = args.activation
-
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-print("PARAMETERS")
-print("TASK: " + str(TASK))
-print("CNN used: " + str(CNN_TO_USE))
-print("POOLING ALGORITHM: " + str(pool_algorithm))
-print("BATCH_SIZE: " + str(BATCH_SIZE_str))
-print("MAGNIFICATION: " + str(MAGNIFICATION))
+# torch.backends.cudnn.benchmark = True
 
-#torch.backends.cudnn.benchmark = True
 
 def select_parameters_colour():
     hue_min = -15
@@ -207,262 +153,27 @@ def generate_transformer(label, prob = 0.5):
     return pipeline_transform
 
 
-# Read the configuration file
-configdir = Path(thispath.parent / f"{config_file}.yml")
-cfg = yaml_load(configdir)
+def get_generator_instances(csv_instances, preprocess, batch_size, pipeline_transform, num_workers):
 
-# Create directory to save the resuls
-outputdir = Path(thispath.parent.parent / "trained_models" / "MIL" / f"{cfg.experiment_name}")
-Path(outputdir).mkdir(exist_ok=True, parents=True)
-
-# wandb login
-wandb.login()
-
-if cfg.wandb.enable:
-        # key = os.environ.get("WANDB_API_KEY")
-        wandb_run = initialize_wandb(cfg, outputdir)
-        wandb_run.define_metric("epoch", summary="max")
-
-# For logging
-logging.basicConfig(format='%(asctime)s %(levelname)s:%(message)s',
-                    encoding='utf-8',
-                    level=logging.INFO,
-                    handlers=[
-                        logging.FileHandler(outputdir / "debug.log"),
-                        logging.StreamHandler()
-                    ],
-                    datefmt='%m/%d/%Y %I:%M:%S %p')
-logging.info(f"CUDA current device {torch.device('cuda:0')}")
-logging.info(f"CUDA devices available {torch.cuda.device_count()}")
-
-# Seed for reproducibility
-seed = 33
-torch.manual_seed(seed)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(seed)
-np.random.seed(seed)
-
-# MoCo model maybe not necesary if lodaded features directly
-# #path model file
-# experiment_name = "MoCo_try_Adam"
-
-# mocodir = Path(thispath.parent.parent / 
-#                "trained_models" / 
-#                "MoCo" / 
-#                experiment_name)
-
-# cfg_moco = yaml_load(mocodir / "config_{experiment_name}.yml")
-
-# model_moco = ModelOption(cfg.model.model_name,
-#                 cfg.model.num_classes,
-#                 freeze=cfg.model.freeze_weights,
-#                 num_freezed_layers=cfg.model.num_frozen_layers,
-#                 dropout=cfg.model.dropout,
-#                 embedding_bool=cfg.model.embedding_bool
-#                 )    
-
-# # Encoder and momentum encoder
-# moco_dim = cfg_moco.training.moco_dim
-
-# encoder = Encoder(model_moco, dim=moco_dim).to(device)
-
-# checkpoint_moco = torch.load(Path(mocodir /
-#                              cfg_moco.dataset.magnification / 
-#                              cfg_moco.model.model_name / 
-#                              "MoCo.pt"))
-# encoder.load_state_dict(checkpoint_moco["encoder_state_dict"])
-# loss_moco = checkpoint_moco["loss"]
-# epoch_moco = checkpoint_moco["epoch"] + 1
-
-# print(f"Loaded encoder using as backbone {model_moco.model_name} with a best"
-#       f"loss of {loss_moco} at Epoch {epoch_moco}")
-
-# preprocess_moco = transforms.Compose([
-#         transforms.ToTensor(),
-#         transforms.Normalize(mean=cfg_moco.dataset.mean, std=cfg_moco.dataset.stddev),
-#         transforms.Resize(size=(model_moco.resize_param, model_moco.resize_param),
-#         antialias=True)
-#     ])
-
-# params_dataloader_moco = {'batch_size': 1,
-#                           'shuffle': False,
-#                           'pin_memory': True,
-#                           'num_workers': 2}
-
-# patches_dataset = Dataset_instance(patches_path, transform=None, preprocess=preprocess_moco)
-# generator = DataLoader(patches_dataset, **params_dataloader_moco)
-
-# encoder.eval()
-# feature_patches_dict = {}
-# with torch.no_grad():
-    
-#     for i, (x_q, x_k) in enumerate(generator):
-
-#         x_q, x_k = x_q.to(device, non_blocking=True), x_k.to(device, non_blocking=True)
-
-#         q = encoder(x_q)
-#         q = q.squeeze().cpu().numpy()
-#         feature_patches_dict[patches_path.stem[i]] = q
-
-# Loading Data Spit
-k = 10
-
-data_split = pd.read_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split.csv"), index_col=0)
-train_dataset_k = []
-validation_dataset_k = []
-train_labels_k = []
-validation_labels_k = []
-
-for fold, _ in data_split.iterrows():
-    train_wsi = literal_eval(data_split.loc[fold]["images_train"])
-    validation_wsi = literal_eval(data_split.loc[fold]["images_test"])
-    labels_traidata_split = pd.read_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split.csv"), index_col=0)n = literal_eval(data_split.loc[fold]["labels_train"])
-    labels_validation = literal_eval(data_split.loc[fold]["labels_test"])
-    train_dataset_k.append(train_wsi)
-    validation_dataset_k.append(validation_wsi)
-    train_labels_k.append(labels_train)
-    validation_labels_k.append(labels_validation)
-
-# Load fold 0
-train_dataset = train_dataset_k[0]
-validation_dataset = validation_dataset_k[0]
-train_labels = train_labels_k[0]
-validation_labels = validation_labels_k[0]
-
-test_csv = pd.read_csv(Path(datadir / f"labels_test.csv"), index_col=0)
-test_dataset = test_csv.index
-test_dataset = [i.replace("/", "-") for i in test_dataset]
-test_labels = test_csv.values
-
-# Load patches path
-pyhistdir = Path(datadir / "Mask_PyHIST_v2")
-
-dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
-
-patches_path = {}
-patches_names = {}
-for wsi_patches in tqdm(dataset_path, desc="Selecting patches to extract features"):
-
-    csv_instances = pd.read_csv(wsi_patches).to_numpy()
-    
-    name = wsi_patches.parent.stem
-    patches_path[name] = csv_instances
-    patches_names[name] = []
-
-    for instance in csv_instances:
-            patches_names[name].append(str(instance).split("/")[-1])
-
-logging.info(f"Total number of patches for train/validation/test {len(patches_path)}")
-
-patches_train = []
-patches_validation = []
-patches_test = []
-for value, key in zip(patches_names.values(), patches_path.keys()):
-        
-    if key in train_dataset:
-        patches_train.extend(value)
-    if key in validation_dataset:
-        patches_validation.extend(value)
-    if key in test_dataset:
-        patches_test.extend(value)
-
-logging.info(f"Total number of patches for train {len(patches_train)}")
-logging.info(f"Total number of patches for validation {len(patches_validation)}")
-logging.info(f"Total number of patches for test {len(patches_test)}")
-
-# Load datasets
-batch_size_bag = 1
-
-# sampler = Balanced_Multimodal
-
-# if (PREPROCESSED_DATA==True and AUGMENT_PROB_THRESHOLD>0.0):
-params_train_bag = {'batch_size': batch_size_bag,
+    params_instance = {'batch_size': batch_size,
+                    'num_workers': num_workers,
+                    'pin_memory': True,
                     'shuffle': True}
-# else:
-# params_train_bag = {'batch_size': batch_size_bag,
-#     'sampler': sampler(train_dataset,alpha=0.25)}
-#     #'shuffle': True}
 
-params_valid_bag = {'batch_size': 1,
-		            'shuffle': False}
+    instances = Dataset_instance(csv_instances, pipeline_transform, preprocess)
+    generator = DataLoader(instances, **params_instance)
 
-training_set_bag = Dataset_bag_MIL(train_dataset[:,0], train_dataset[:,1:])
-training_generator_bag = DataLoader(training_set_bag, **params_train_bag)
+    return generator
 
-validation_set_bag = Dataset_bag_MIL(validation_dataset[:,0], validation_dataset[:,1:])
-validation_generator_bag = DataLoader(validation_set_bag, **params_valid_bag)
-
-# Load features from MoCo model
-experiment_name = "MoCo_try_Adam"
-
-mocodir = Path(thispath.parent.parent / 
-               "trained_models" / 
-               "MoCo" / 
-               experiment_name)
-
-df_features = pd.read_csv(mocodir / f"features_{experiment_name}.csv", index_col=0)
-
-features_train = df_features.loc[patches_train]
-features_valid = df_features.loc[patches_validation]
-features_test = df_features.loc[patches_test]
-
-# Initialize Bert Tokenizer
-logging.info("== Initialize BERT ==")
-bert_chosen = 'emilyalsentzer/Bio_ClinicalBERT'
-tokenizer = BertTokenizer.from_pretrained(bert_chosen)  
-#tokenizer = AutoTokenizer.from_pretrained(bert_chosen)  
-clinical_bert_token_size = 768
-#print(tokenizer)
-
-# Load pretrained model
-model = ModelOption(cfg.model.model_name,
-            cfg.model.num_classes,
-            freeze=cfg.model.freeze_weights,
-            num_freezed_layers=cfg.model.num_frozen_layers,
-            dropout=cfg.model.dropout,
-            embedding_bool=cfg.model.embedding_bool,
-            pool_algorithm=cfg.model.pool_algorithm
-            )
-
-hidden_space_len = cfg.model.hidden_space_len
-
-net = MIL_model(model, hidden_space_len)
-
-net.to(device)
-net.eval()
-
-
-for name, param in net.conv_layers.named_parameters():
-	#if '10' in name or '11' in name: 
-	param.requires_grad = False
-
-# Data augmentation
-prob = cfg.data_augmentation.prob
-
-pipeline_transform_local = A.Compose([
-		A.VerticalFlip(p=prob),
-		A.HorizontalFlip(p=prob),
-		A.RandomRotate90(p=prob),
-		#A.ElasticTransform(alpha=0.1,p=prob),
-		A.HueSaturationValue(hue_shift_limit=(-15,8),sat_shift_limit=(-20,10),val_shift_limit=(-8,8),p=prob),
-		])
-
-# Data normalization
-preprocess = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(mean=cfg.dataset.mean, std=cfg.dataset.stddev),
-    transforms.Resize(size=(model.resize_param, model.resize_param),
-    antialias=True)
-])
 
 def accuracy_micro(y_true, y_pred):
 
     y_true_flatten = y_true.flatten()
     y_pred_flatten = y_pred.flatten()
-	
+    
     return metrics.accuracy_score(y_true_flatten, y_pred_flatten)
 
-	
+    
 def accuracy_macro(y_true, y_pred):
 
     n_classes = len(y_true[0])
@@ -480,37 +191,7 @@ def accuracy_macro(y_true, y_pred):
     return acc_tot
 
 
-# Loss function
-criterion = getattr(torch.nn, cfg.training.criterion)()
-
-# Optimizer
-
-optimizer = getattr(torch.optim, cfg.training.optimizer)
-optimizer = optimizer(net.parameters(), **cfg.training.optimizer_args)
-
-# scheduler = getattr(torch.optim.lr_scheduler, cfg.training.lr_scheduler)
-# scheduler = scheduler(optimizer, **cfg.training.lr_scheduler_args)
-
-
-# no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight",'prelu']
-# emb_par = ["img_embeddings_encoder.weight", "embedding_fc.weight"]
-
-# param_optimizer_CNN = list(net.named_parameters())
-# print(len(param_optimizer_CNN))
-# #print(param_optimizer)
-# no_decay = ["prelu", "bias", "LayerNorm.bias", "LayerNorm.weight"]
-# optimizer_grouped_parameters_CNN = [
-# 	{"params": [p for n, p in param_optimizer_CNN if not any(nd in n for nd in no_decay) and not any(nd in n for nd in emb_par)], "weight_decay": wt_decay},
-# 	{"params": [p for n, p in param_optimizer_CNN if any(nd in n for nd in no_decay) and not any(nd in n for nd in emb_par)], "weight_decay": 0.0,},
-# 	{"params": [p for n, p in param_optimizer_CNN if any(nd in n for nd in emb_par)], "weight_decay": wt_decay, 'lr': lr},
-# ]
-
-# #optimizer_CNN = optim.Adam(model.parameters(),lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=wt_decay, amsgrad=True)
-# optimizer_CNN = optim.Adam(optimizer_grouped_parameters_CNN,lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=wt_decay, amsgrad=True)
-#optimizer_CNN = AdamW(optimizer_grouped_parameters_CNN,lr = lr,eps=1e-8)
-
-
-def evaluate_validation_set(net, generator):
+def evaluate_validation_set(net, criterion, generator, features_valid):
     #accumulator for validation set
     y_pred = []
     y_true = []
@@ -520,38 +201,31 @@ def evaluate_validation_set(net, generator):
     net.eval()
 
     with torch.no_grad():
-        for wsi_id, labels in generator:
+        for i, (wsi_id, labels) in enumerate(generator):
 
             label_wsi = labels[0].cpu().numpy().flatten()
-	
+    
             labels_local = labels.float().flatten().to(device, non_blocking=True)
 
-            print("[" + str(i) + "/" + str(len(train_dataset)) + "], " + "inputs_bag: " + str(wsi_id))
-            print("labels: " + str(label_wsi))
-
-            with open(filename_features, 'rb') as f:
-                features_np = np.load(f)
-                f.close()
-
             #read csv with instances
-            n_indices = len(features_np)
-            #indices = np.random.choice(n_indices,n_indices,replace=False)
-            indices = np.random.permutation(n_indices)
-            features_np = features_np[indices]
+            # n_indices = len(features_np)
+            # #indices = np.random.choice(n_indices,n_indices,replace=False)
+            # indices = np.random.permutation(n_indices)
+            # features_np = features_np[indices]
+            features_wsi = features_valid.loc[wsi_id].values
+            inputs = torch.as_tensor(features_wsi).float().to(device, non_blocking=True)
 
-            inputs = torch.as_tensor(features_np).float().to(device, non_blocking=True)
-
-            logits_img, cls_img = net(None, inputs)
-			
+            logits_img, _ = net(None, inputs)
+            
             #loss img
             loss_img = criterion(logits_img, labels_local)
 
             sigmoid_output_img = F.sigmoid(logits_img)
             outputs_wsi_np_img = sigmoid_output_img.cpu().data.numpy()
             validation_loss = validation_loss + ((1 / (i+1)) * (loss_img.item() - validation_loss))
-			
-            print("pred_img: " + str(outputs_wsi_np_img))
-            print("validation_loss: " + str(validation_loss))
+            
+            logging.info("pred_img: " + str(outputs_wsi_np_img))
+            logging.info("validation_loss: " + str(validation_loss))
 
             output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
 
@@ -559,263 +233,567 @@ def evaluate_validation_set(net, generator):
             y_true = np.append(y_true,label_wsi)
 
             micro_accuracy_train = accuracy_micro(y_true, y_pred)
-            print("micro_accuracy " + str(micro_accuracy_train))    
-	
-    return validation_loss
-
-epoch = 0
-iterations = int(len(train_dataset) / batch_size_bag)+1
-
-tot_batches_training = iterations#int(len(train_dataset)/batch_size_bag)
-best_loss = 100000.0
-
-	#number of epochs without improvement
-early_stop = cfg.training.early_stop
-early_stop_cont = 0
-
-batch_size = cfg.dataloader.batch_size
+            logging.info("micro_accuracy " + str(micro_accuracy_train))    
+    
+    return validation_loss, micro_accuracy_train
 
 
-while (epoch<cfg.training.epochs and early_stop_cont<early_stop):
+@click.command()
+@click.option(
+    "--config_file",
+    default="config_MIL",
+    prompt="Name of the config file without extension",
+    help="Name of the config file without extension",
+)
+@click.option(
+    "--exp_name_moco",
+    default="MoCo_try_cpu_256_resnet34",
+    prompt="Name of the MoCo experiment",
+    help="Name of the MoCo experiment",
+)
+def main(config_file, exp_name_moco):
+    # Read the configuration file
+    configdir = Path(thispath.parent / f"{config_file}.yml")
+    cfg = yaml_load(configdir)
+
+    # Create directory to save the resuls
+    outputdir = Path(thispath.parent.parent / "trained_models" / "MIL" / f"{cfg.experiment_name}")
+    Path(outputdir).mkdir(exist_ok=True, parents=True)
+
+    # wandb login
+    # wandb.login()
+
+    # if cfg.wandb.enable:
+    #         # key = os.environ.get("WANDB_API_KEY")
+    #         wandb_run = initialize_wandb(cfg, outputdir)
+    #         wandb_run.define_metric("epoch", summary="max")
+
+    # For logging
+    logging.basicConfig(format='%(asctime)s %(levelname)s:%(message)s',
+                        encoding='utf-8',
+                        level=logging.INFO,
+                        handlers=[
+                            logging.FileHandler(outputdir / "debug.log"),
+                            logging.StreamHandler()
+                        ],
+                        datefmt='%m/%d/%Y %I:%M:%S %p')
+    
+    logging.info(f"CUDA current device {torch.device('cuda:0')}")
+    logging.info(f"CUDA devices available {torch.cuda.device_count()}")
+
+    # Seed for reproducibility
+    seed = 33
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+
+    # MoCo model maybe not necesary if lodaded features directly
+    # #path model file
+    # experiment_name = "MoCo_try_Adam"
+
+    # mocodir = Path(thispath.parent.parent / 
+    #                "trained_models" / 
+    #                "MoCo" / 
+    #                experiment_name)
+
+    # cfg_moco = yaml_load(mocodir / "config_{experiment_name}.yml")
+
+    # model_moco = ModelOption(cfg.model.model_name,
+    #                 cfg.model.num_classes,
+    #                 freeze=cfg.model.freeze_weights,
+    #                 num_freezed_layers=cfg.model.num_frozen_layers,
+    #                 dropout=cfg.model.dropout,
+    #                 embedding_bool=cfg.model.embedding_bool
+    #                 )    
+
+    # # Encoder and momentum encoder
+    # moco_dim = cfg_moco.training.moco_dim
+
+    # encoder = Encoder(model_moco, dim=moco_dim).to(device)
+
+    # checkpoint_moco = torch.load(Path(mocodir /
+    #                              cfg_moco.dataset.magnification / 
+    #                              cfg_moco.model.model_name / 
+    #                              "MoCo.pt"))
+    # encoder.load_state_dict(checkpoint_moco["encoder_state_dict"])
+    # loss_moco = checkpoint_moco["loss"]
+    # epoch_moco = checkpoint_moco["epoch"] + 1
+
+    # print(f"Loaded encoder using as backbone {model_moco.model_name} with a best"
+    #       f"loss of {loss_moco} at Epoch {epoch_moco}")
+
+    # preprocess_moco = transforms.Compose([
+    #         transforms.ToTensor(),
+    #         transforms.Normalize(mean=cfg_moco.dataset.mean, std=cfg_moco.dataset.stddev),
+    #         transforms.Resize(size=(model_moco.resize_param, model_moco.resize_param),
+    #         antialias=True)
+    #     ])
+
+    # params_dataloader_moco = {'batch_size': 1,
+    #                           'shuffle': False,
+    #                           'pin_memory': True,
+    #                           'num_workers': 2}
+
+    # patches_dataset = Dataset_instance(patches_path, transform=None, preprocess=preprocess_moco)
+    # generator = DataLoader(patches_dataset, **params_dataloader_moco)
+
+    # encoder.eval()
+    # feature_patches_dict = {}
+    # with torch.no_grad():
+        
+    #     for i, (x_q, x_k) in enumerate(generator):
+
+    #         x_q, x_k = x_q.to(device, non_blocking=True), x_k.to(device, non_blocking=True)
+
+    #         q = encoder(x_q)
+    #         q = q.squeeze().cpu().numpy()
+    #         feature_patches_dict[patches_path.stem[i]] = q
+
+    # Loading Data Spit
+    k = 10
+
+    data_split = pd.read_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split.csv"), index_col=0)
+    train_dataset_k = []
+    validation_dataset_k = []
+    train_labels_k = []
+    validation_labels_k = []
+
+    for fold, _ in data_split.iterrows():
+        train_wsi = literal_eval(data_split.loc[fold]["images_train"])
+        validation_wsi = literal_eval(data_split.loc[fold]["images_test"])
+        labels_train = literal_eval(data_split.loc[fold]["labels_train"])
+        labels_validation = literal_eval(data_split.loc[fold]["labels_test"])
+        train_dataset_k.append(train_wsi)
+        validation_dataset_k.append(validation_wsi)
+        train_labels_k.append(labels_train)
+        validation_labels_k.append(labels_validation)
+
+    # Load fold 0
+    train_dataset = train_dataset_k[0]
+    validation_dataset = validation_dataset_k[0]
+    train_labels = train_labels_k[0]
+    validation_labels = validation_labels_k[0]
+
+    test_csv = pd.read_csv(Path(datadir / f"labels_test.csv"), index_col=0)
+    test_dataset = test_csv.index
+    test_dataset = [i.replace("/", "-") for i in test_dataset]
+    test_labels = test_csv.values
+
+    # Load patches path
+    pyhistdir = Path(datadir / "Mask_PyHIST_v2")
+
+    dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
+
+    patches_path = {}
+    patches_names = {}
+    for wsi_patches in tqdm(dataset_path, desc="Selecting patches to extract features"):
+
+        csv_instances = pd.read_csv(wsi_patches).to_numpy()
+        
+        name = wsi_patches.parent.stem
+        patches_path[name] = csv_instances
+        patches_names[name] = []
+
+        for instance in csv_instances:
+                patches_names[name].append(str(instance).split("/")[-1])
+
+    logging.info(f"Total number of patches for train/validation/test {len(patches_path)}")
+
+    patches_train = {}
+    patches_validation = []
+    patches_test = []
+    for value, key in zip(patches_names.values(), patches_names.keys()):
+        if key in train_dataset:
+            patches_train[key] = value
+        if key in validation_dataset:
+            patches_validation.extend(value)
+        if key in test_dataset:
+            patches_test.extend(value)
+
+    logging.info(f"Total number of patches for train {len(patches_train)}")
+    logging.info(f"Total number of patches for validation {len(patches_validation)}")
+    logging.info(f"Total number of patches for test {len(patches_test)}")
+
+    # Load datasets
+    batch_size_bag = cfg.dataloader.batch_size_bag
 
 
-    validation_loss = 0.0
+    params_train_bag = {'batch_size': batch_size_bag,
+                        'shuffle': True}
 
-    #accumulator accuracy for the outputs
-    is_best = False
+    params_valid_bag = {'batch_size': len(validation_dataset),
+                        'shuffle': False}
 
-    filenames_wsis = []
-    pred_cancers = []
-    pred_hgd = []
-    pred_lgd = []
-    pred_hyper = []
-    pred_normal = []
+    training_set_bag = Dataset_bag_MIL(train_dataset, train_labels)
+    training_generator_bag = DataLoader(training_set_bag, **params_train_bag)
 
-    samples_fname = []
-    positive_samples_fname = []
-    negative_samples_fname = []
-    hard_negative_samples_fname = []
+    validation_set_bag = Dataset_bag_MIL(validation_dataset, validation_labels)
+    validation_generator_bag = DataLoader(validation_set_bag, **params_valid_bag)
 
-    y_pred = []
-    y_true = []
+    # Load features from MoCo model
+    experiment_name = exp_name_moco
 
-    dataloader_iterator = iter(training_generator_bag)
+    logging.info(f"== Loading features from {experiment_name} ==")
 
-    net.train()
+    mocodir = Path(thispath.parent.parent / 
+                "trained_models" / 
+                "MoCo" / 
+                experiment_name)
 
-    if (flag_dataset=='finetune_pretrain'):
-        for param in model.embedding.parameters():
-            param.requires_grad = False
+    cfg_moco = yaml_load(mocodir / f"config_{experiment_name}.yml")
 
-        for param in model.attention.parameters():
-            param.requires_grad = False
-			
-        for param in model.embedding_before_fc.parameters():
-            param.requires_grad = False		
+    checkpoint_moco = torch.load(Path(mocodir /
+                                cfg_moco.dataset.magnification / 
+                                cfg_moco.model.model_name / 
+                                f"{exp_name_moco}.pt"))
 
-    total_params = sum(p.numel() for p in net.parameters())
-    print(f'{total_params:,} total parameters.')
-    total_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f'{total_trainable_params:,} training parameters CNN.')
+    # df_features = pd.read_csv(mocodir / f"features_{experiment_name}.csv", index_col=0)
 
-    for i in range(iterations):
-        print('[%d], %d / %d ' % (epoch, i, tot_batches_training))
-        try:
-            ID, labels = next(dataloader_iterator)
-        except StopIteration:
-            dataloader_iterator = iter(training_generator_bag)
-            ID, labels = next(dataloader_iterator)
-            #inputs: bags, labels: labels of the bags
-			
-        labels_np = labels.cpu().data.numpy().flatten()
+    # features_valid = df_features.loc[patches_validation]
+    # features_test = df_features.loc[patches_test]
 
-        ID = ID[0]
-        #instances_filename_sample = generate_list_instances(ID)
-        diagnosis_wsi = get_diagnosis(ID)
+    # Initialize Bert Tokenizer
+    logging.info("== Initialize BERT ==")
+    bert_chosen = 'emilyalsentzer/Bio_ClinicalBERT'
+    tokenizer = BertTokenizer.from_pretrained(bert_chosen)  
+    #tokenizer = AutoTokenizer.from_pretrained(bert_chosen)  
+    clinical_bert_token_size = 768
+    #print(tokenizer)
 
-        #embedding
-        filename_wsi = ID
+    # Load pretrained model
+    model = ModelOption(cfg.model.model_name,
+                cfg.model.num_classes,
+                freeze=cfg.model.freeze_weights,
+                num_freezed_layers=cfg.model.num_frozen_layers,
+                dropout=cfg.model.dropout,
+                embedding_bool=cfg.model.embedding_bool,
+                pool_algorithm=cfg.model.pool_algorithm
+                )
 
-        labels_local = labels.float().flatten().to(device, non_blocking=True)
+    hidden_space_len = cfg.model.hidden_space_len
 
-        print("[" + str(i) + "/" + str(len(train_dataset)) + "], " + "inputs_bag: " + str(filename_wsi))
-        print("labels: " + str(labels_np))
-	
+    net = MIL_model(model, hidden_space_len)
 
-        prob_pre = np.random.rand(1)[0]
+    net.load_state_dict(checkpoint_moco["encoder_state_dict"], strict=False)
+    net.to(device)
+    net.eval()
 
-        #pipeline_transform = generate_transformer(labels_np[i_wsi])
-        pipeline_transform = generate_transformer(labels_np)
-        instances_filename_sample = generate_list_instances(ID)
+    for name, param in net.conv_layers.named_parameters():
+        #if '10' in name or '11' in name: 
+        param.requires_grad = False
 
-        csv_instances = pd.read_csv(instances_filename_sample, sep=',', header=None).values
-        n_elems = len(csv_instances)
-        #embedding
+    # Data augmentation
+    prob = cfg.data_augmentation.prob
 
-        n_elems = len(csv_instances)
-	
-        num_workers = cfg.dataloader.num_workers
+    pipeline_transform_local = A.Compose([
+            A.VerticalFlip(p=prob),
+            A.HorizontalFlip(p=prob),
+            A.RandomRotate90(p=prob),
+            #A.ElasticTransform(alpha=0.1,p=prob),
+            A.HueSaturationValue(hue_shift_limit=(-15,8),sat_shift_limit=(-20,10),val_shift_limit=(-8,8),p=prob),
+            ])
 
-        if (n_elems > batch_size_instance):
-            pin_memory = True
-        else:
-            pin_memory = False
+    # Data normalization
+    preprocess = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=cfg.dataset.mean, std=cfg.dataset.stddev),
+        transforms.Resize(size=(model.resize_param, model.resize_param),
+        antialias=True)
+    ])
 
-        params_instance = {'batch_size': batch_size_instance,
-                'num_workers': num_workers,
-                'pin_memory': pin_memory,
-                'shuffle': True}
+    # Loss function
+    criterion = getattr(torch.nn, cfg.training.criterion)()
 
-        instances = Dataset_instance_MIL(csv_instances,mode,pipeline_transform)
-        generator = DataLoader(instances, **params_instance)
+    # Optimizer
 
-        net.eval()
+    optimizer = getattr(torch.optim, cfg.training.optimizer)
+    optimizer = optimizer(net.parameters(), **cfg.training.optimizer_args)
 
-        features = []
-        with torch.no_grad():
-            for instances in training_generator_instance:
-                instances = instances.to(device, non_blocking=True)
+    # scheduler = getattr(torch.optim.lr_scheduler, cfg.training.lr_scheduler)
+    # scheduler = scheduler(optimizer, **cfg.training.lr_scheduler_args)
 
-                # forward + backward + optimize
-                feats = net.conv_layers(instances)
-                feats = feats.view(-1, fc_input_features)
-                feats_np = feats.cpu().data.numpy()
+    # no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight",'prelu']
+    # emb_par = ["img_embeddings_encoder.weight", "embedding_fc.weight"]
 
-                features = np.append(features,feats_np)
+    # param_optimizer_CNN = list(net.named_parameters())
+    # print(len(param_optimizer_CNN))
+    # #print(param_optimizer)
+    # no_decay = ["prelu", "bias", "LayerNorm.bias", "LayerNorm.weight"]
+    # optimizer_grouped_parameters_CNN = [
+    # 	{"params": [p for n, p in param_optimizer_CNN if not any(nd in n for nd in no_decay) and not any(nd in n for nd in emb_par)], "weight_decay": wt_decay},
+    # 	{"params": [p for n, p in param_optimizer_CNN if any(nd in n for nd in no_decay) and not any(nd in n for nd in emb_par)], "weight_decay": 0.0,},
+    # 	{"params": [p for n, p in param_optimizer_CNN if any(nd in n for nd in emb_par)], "weight_decay": wt_decay, 'lr': lr},
+    # ]
 
-				#del instances
-			#del instances
-        features_np = np.reshape(features,(n_elems,fc_input_features))
+    # #optimizer_CNN = optim.Adam(model.parameters(),lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=wt_decay, amsgrad=True)
+    # optimizer_CNN = optim.Adam(optimizer_grouped_parameters_CNN,lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=wt_decay, amsgrad=True)
+    #optimizer_CNN = AdamW(optimizer_grouped_parameters_CNN,lr = lr,eps=1e-8)
 
-        #torch.cuda.empty_cache()
-        #del features, feats
+    # Training 
+    epoch = 0
+    early_stop = cfg.training.early_stop
+    early_stop_cont = 0
+    batch_size = cfg.dataloader.batch_size
+
+    iterations = int(len(train_dataset))+1
+    best_loss = 100000.0
+    cont_iterations_tot = 0
+    start_time = time.time()
+
+    while (epoch<cfg.training.epochs and early_stop_cont<early_stop):
+
+        # wandb.log({"epoch": epoch + 1})
+
+        start_time_epoch = time.time()
+        total_iters = 0
+        train_loss = 0.0
+        
+
+        filenames_wsis = []
+        pred_scc = []
+        pred_nscc_ademo = []
+        pred_nscc_squamoous = []
+        pred_normal = []
+
+        samples_fname = []
+        positive_samples_fname = []
+        negative_samples_fname = []
+        hard_negative_samples_fname = []
+
+        y_pred = []
+        y_true = []
+
+        dataloader_iterator = iter(training_generator_bag)
 
         net.train()
-        net.zero_grad(set_to_none=True)
 
-        inputs_embedding = torch.tensor(features_np, requires_grad=True).float().to(device, non_blocking=True)
+        # if (flag_dataset=='finetune_pretrain'):
+        #     for param in net.embedding.parameters():
+        #         param.requires_grad = False
 
-        logits_img, cls_img = net(None, inputs_embedding)
+        #     for param in net.attention.parameters():
+        #         param.requires_grad = False
+                
+        #     for param in net.embedding_before_fc.parameters():
+        #         param.requires_grad = False		
+
+        total_params = sum(p.numel() for p in net.parameters())
+        logging.info(f'{total_params:,} total parameters.')
+        total_trainable_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+        logging.info(f'{total_trainable_params:,} training parameters CNN.')
+
+        for i in range(iterations):
+            logging.info('[%d], %d / %d ' % (epoch + 1, i, iterations))
+            try:
+                wsi_id, labels = next(dataloader_iterator)
+            except StopIteration:
+                dataloader_iterator = iter(training_generator_bag)
+                wsi_id, labels = next(dataloader_iterator)
+                #inputs: bags, labels: labels of the bags
+            
+            wsi_id = wsi_id[0]
+            labels = torch.stack(labels)
+            labels_np = labels.cpu().numpy().flatten()
+
+            labels_local = labels.float().flatten().to(device, non_blocking=True)
+
+            # print("[" + str(i) + "/" + str(len(train_dataset)) + "], " + "inputs_bag: " + str(wsi_id))
+            # print("labels: " + str(labels_np))
         
-        #loss img
-        loss_img = criterion(logits_img, labels_local)
-		
-        #loss_classification = (loss_img + loss_neg) / 2
-        loss = loss_img
 
-        sigmoid_output_img = F.sigmoid(logits_img)
-        outputs_wsi_np_img = sigmoid_output_img.cpu().data.numpy()
-        validation_loss = validation_loss + ((1 / (i+1)) * (loss.item() - validation_loss))
+            #pipeline_transform = generate_transformer(labels_np[i_wsi])
+            pipeline_transform = generate_transformer(labels_np)
 
-        loss.backward() 
+            training_generator_instance = get_generator_instances(patches_path[wsi_id], 
+                                                                  preprocess,
+                                                                  batch_size, 
+                                                                  pipeline_transform,
+                                                                  cfg.dataloader.num_workers) 
+            
+            n_elems = len(patches_train[wsi_id])                                            
+            net.eval()
 
-        optimizer.step()
-        #scheduler.step()
+            features = []
+            with torch.no_grad():
+                for instances in training_generator_instance:
+                    instances = instances.to(device, non_blocking=True)
 
-        optimizer.zero_grad(set_to_none=True)
-        model.zero_grad(set_to_none=True)
-        #bert_model.zero_grad()
+                    # forward + backward + optimize
+                    feats = net.conv_layers(instances)
+                    feats = feats.view(-1, net.fc_input_features)
+                    feats_np = feats.cpu().data.numpy()
 
-        print()
-        print("pred_img: " + str(outputs_wsi_np_img))
-        print("validation_loss: " + str(validation_loss))
+                    features = np.append(features,feats_np)
 
-        filenames_wsis = np.append(filenames_wsis, filename_wsi)
-        pred_cancers = np.append(pred_cancers, outputs_wsi_np_img[0])
-        pred_hgd = np.append(pred_hgd, outputs_wsi_np_img[1])
-        pred_lgd = np.append(pred_lgd, outputs_wsi_np_img[2])
-        pred_hyper = np.append(pred_hyper, outputs_wsi_np_img[3])
-        pred_normal = np.append(pred_normal, outputs_wsi_np_img[4])
+                    #del instances
+                #del instances
+            features_np = np.reshape(features,(n_elems, net.fc_input_features))
 
-        output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
+            #torch.cuda.empty_cache()
+            #del features, feats
 
-        y_pred = np.append(y_pred,output_norm)
-        y_true = np.append(y_true,labels_np)
+            net.train()
+            net.zero_grad(set_to_none=True)
 
-        micro_accuracy_train = accuracy_micro(y_true, y_pred)
-        print("micro_accuracy " + str(micro_accuracy_train))    
+            inputs_embedding = torch.tensor(features_np, requires_grad=True).float().to(device, non_blocking=True)
 
-    #save_training predictions
-    filename_training_predictions = checkpoint_path+'training_predictions_'+str(epoch)+'.csv'
+            logits_img, cls_img = net(None, inputs_embedding)
+            
+            #loss img
+            loss_img = criterion(logits_img, labels_local)
+            
+            #loss_classification = (loss_img + loss_neg) / 2
+            loss = loss_img
 
-    File = {'filenames':filenames_wsis, 'pred_cancers':pred_cancers, 'pred_hgd':pred_hgd,'pred_lgd':pred_lgd, 'pred_hyper':pred_hyper, 'pred_normal':pred_normal}
+            sigmoid_output_img = F.sigmoid(logits_img)
+            outputs_wsi_np_img = sigmoid_output_img.cpu().data.numpy()
+            train_loss = train_loss + ((1 / (i+1)) * (loss.item() - train_loss))
+            
+            total_iters = total_iters + 1
+            cont_iterations_tot = cont_iterations_tot + 1
 
-    df = pd.DataFrame(File,columns=['filenames','pred_cancers','pred_hgd','pred_lgd','pred_hyper','pred_normal'])
-    np.savetxt(filename_training_predictions, df.values, fmt='%s',delimiter=',')
+            # if (total_iters%200==True):
+                # wandb.log({"iterations": cont_iterations_tot})
+                # wandb.define_metric("train/loss_iter", step_metric="iterations")
+                # wandb.log({"train/loss_iter": train_loss})
 
-    #bert_model.eval()
+            loss.backward() 
 
-    samples_fname = []
-    positive_samples_fname = []
-    negative_samples_fname = []
-    hard_negative_samples_fname = []
+            optimizer.step()
 
-    print("evaluating validation")
-    valid_loss = evaluate_validation_set(net, epoch, validation_generator_bag)
+            optimizer.zero_grad(set_to_none=True)
+            model.zero_grad(set_to_none=True)
+            #bert_model.zero_grad()
 
-    #save validation
-    filename_val = validation_checkpoints+'validation_value_'+str(epoch)+'.csv'
-    array_val = [valid_loss]
-    File = {'val':array_val}
-    df = pd.DataFrame(File,columns=['val'])
-    np.savetxt(filename_val, df.values, fmt='%s',delimiter=',')
+            logging.info("pred_img: " + str(outputs_wsi_np_img))
+            logging.info("train_loss: " + str(train_loss))
 
-    #save_hyperparameters
-    filename_hyperparameters = checkpoint_path+'hyperparameters.csv'
-    array_n_classes = model.num_classes
-    array_lr = [str(lr)]
-    array_embedding = [EMBEDDING_bool]
-    File = {'n_classes':array_n_classes, 'lr':array_lr, 'embedding':array_embedding}
+            filenames_wsis = np.append(filenames_wsis, wsi_id)
+            pred_scc = np.append(pred_scc, outputs_wsi_np_img[0])
+            pred_nscc_ademo = np.append(pred_nscc_ademo, outputs_wsi_np_img[1])
+            pred_nscc_squamoous = np.append(pred_nscc_squamoous, outputs_wsi_np_img[2])
+            pred_normal = np.append(pred_normal, outputs_wsi_np_img[3])
 
-    df = pd.DataFrame(File,columns=['n_classes','lr','embedding','modality'])
-    np.savetxt(filename_hyperparameters, df.values, fmt='%s',delimiter=',')
+            output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
 
-    # Create directories for the outputs
-    outputdir_results = Path(outputdir /
-                                cfg.dataset.magnification / 
-                                cfg.model.model_name)
-    Path(outputdir_results).mkdir(exist_ok=True, parents=True)
+            y_pred = np.append(y_pred, output_norm)
+            y_true = np.append(y_true, labels_np)
 
-    model_filename = Path(outputdir_results / f"{cfg.experiment_name}.pt")
-    model_filename_temp = Path(outputdir_results / f"{cfg.experiment_name}_temporary.pt")
-    model_weights_filename_checkpoint = Path(outputdir_results /'checkpoint.pt')
+            micro_accuracy_train = accuracy_micro(y_true, y_pred)
+            logging.info("micro_accuracy " + str(micro_accuracy_train))    
 
-    if (epoch>=THRESHOLD_CLASSIFICATION):
+        accuracy_train = accuracy_macro(y_true, y_pred)
+        # wandb.define_metric("train/loss", step_metric="epoch")
+        # wandb.log({"train/loss": train_loss})
+        # wandb.define_metric("train/accuracy", step_metric="epoch")
+        # wandb.log({"train/accuracy": micro_accuracy_train})
+
+        #save_training predictions
+        filename_training_predictions = Path(outputdir / f"training_predictions_{epoch}.csv")
+
+        File = {'filenames': filenames_wsis,
+                'pred_scc': pred_scc, 
+                'pred_nscc_ademo': pred_nscc_ademo,
+                'pred_nscc_squamoous': pred_nscc_squamoous, 
+                'pred_normal': pred_normal}
+
+        df_predictions = pd.dataframe.from_dict(File)
+        df_predictions.to_csv(filename_training_predictions)
+
+        #bert_model.eval()
+
+        samples_fname = []
+        positive_samples_fname = []
+        negative_samples_fname = []
+        hard_negative_samples_fname = []
+
+        logging.info("== Validation ==")
+        valid_loss, accuracy_validation = evaluate_validation_set(net, 
+                                                                criterion, 
+                                                                epoch, 
+                                                                validation_generator_bag,
+                                                                features_valid)
+      
+        # wandb.define_metric("validation/loss", step_metric="epoch")
+        # wandb.log({"validation/loss": valid_loss})
+        # wandb.define_metric("validation/accuracy", step_metric="epoch")
+        # wandb.log({"validation/accuracy": accuracy_validation})
+
+        # Create directories for the outputs
+        outputdir_results = Path(outputdir /
+                                 cfg.dataset.magnification / 
+                                 cfg.model.model_name)
+        Path(outputdir_results).mkdir(exist_ok=True, parents=True)
+
+        model_filename = Path(outputdir_results / f"{cfg.experiment_name}.pt")
+        model_filename_temp = Path(outputdir_results / f"{cfg.experiment_name}_temporary.pt")
+        model_weights_filename_checkpoint = Path(outputdir_results /'checkpoint.pt')
+
         if (best_loss>valid_loss):
             early_stop_cont = 0
-            print ("=> Saving a new best model")
-            print("previous loss : " + str(best_loss) + ", new loss function: " + str(valid_loss))
+            logging.info ("=> Saving a new best model")
+            logging.info("previous loss : " + str(best_loss) + ", new loss function: " + str(valid_loss))
             best_loss = valid_loss
+            best_epoch = epoch
 
             try:
-                torch.save(net.state_dict(), model_filename,_use_new_zipfile_serialization=False)
+                torch.save({'epoch': best_epoch,
+                            'encoder_state_dict': net.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            # 'scheduler_state_dict': scheduler.state_dict(),
+                            'train_loss': train_loss,
+                            'valid_loss': best_loss},
+                            model_filename,
+                            _use_new_zipfile_serialization=False)
             except:
-                try:
-                    torch.save(net.state_dict(), model_filename)    
-                except:
-                    torch.save(net, model_filename)
-
+                torch.save({'epoch': best_epoch,
+                            'encoder_state_dict': net.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            # 'scheduler_state_dict': scheduler.state_dict(),
+                            'train_loss': train_loss,
+                            'valid_loss': best_loss},
+                            model_filename)   
+                    
             filename_training_predictions = Path(outputdir_results / 'training_predictions_best.csv')
 
-            File = {'filenames':filenames_wsis, 'pred_cancers':pred_cancers, 'pred_hgd':pred_hgd,'pred_lgd':pred_lgd, 'pred_hyper':pred_hyper, 'pred_normal':pred_normal}
+            File = {'filenames': filenames_wsis,
+                'pred_scc': pred_scc, 
+                'pred_nscc_ademo': pred_nscc_ademo,
+                'pred_nscc_squamoous': pred_nscc_squamoous, 
+                'pred_normal': pred_normal}
 
-            df = pd.DataFrame(File,columns=['filenames','pred_cancers','pred_hgd','pred_lgd','pred_hyper','pred_normal'])
-            np.savetxt(filename_training_predictions, df.values, fmt='%s',delimiter=',')
+            df_predictions = pd.dataframe.from_dict(File)
+            df_predictions.to_csv(filename_training_predictions)
 
         else:
             early_stop_cont = early_stop_cont+1
-		
 
-    #save checkpoint
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': net.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'loss': loss,
-        }, model_weights_filename_checkpoint)
+        #save checkpoint
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': net.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': loss,
+            'train_loss': train_loss,
+            'valid_loss': best_loss},
+            model_weights_filename_checkpoint)
 
-    epoch = epoch+1
-    if (early_stop_cont == early_stop):
-        print("EARLY STOPPING")
+        epoch = epoch+1
+        if (early_stop_cont == early_stop):
+            logging.info("======== EARLY STOPPING ========")
 
-torch.cuda.empty_cache()
+        message = timer(start_time_epoch, time.time())
+        logging.info(f"Time to complete epoch {epoch + 1} is {message}" )
+
+    message = timer(start_time, time.time())
+    logging.info(f"Training complete in {message}" )
+    logging.info(f"Best loss: {best_loss} at {best_epoch + 1}")
+
+    torch.cuda.empty_cache()
+
+    wandb.finish()
+
+
+if __name__ == '__main__':
+    main()

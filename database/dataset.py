@@ -4,6 +4,7 @@ from pathlib import Path
 import pyspng
 from PIL import Image
 import numpy as np
+import cv2 as cv
   
 thispath = Path(__file__).resolve()
 
@@ -26,7 +27,9 @@ class Dataset_instance(Dataset):
         # with open(self.wsi_path_patches[index][0], 'rb') as fin:
         #     key =  pyspng.load(fin.read())
         # open method used to open different extension image file
-        key = np.array(Image.open(self.wsi_path_patches[index][0]))  
+        # key = np.array(Image.open(self.wsi_path_patches[index][0]))
+        key = cv.imread(self.wsi_path_patches[index][0])
+        key = cv.cvtColor(key, cv.COLOR_BGR2RGB)
 
         if self.transform:
             query = self.transform(image=key)['image']
@@ -67,9 +70,9 @@ class Dataset_instance_MIL(Dataset):
 
     def __getitem__(self, index):
         # Select sample
-        ID = self.list_IDs[index][0]
+        wsi_id = self.wsi_path_patches[index][0]
         # Load data and get label
-        with open(ID, 'rb') as fin:
+        with open(wsi_id, 'rb') as fin:
             input_tensor = pyspng.load(fin.read())
         #img.close()
 

@@ -23,19 +23,19 @@ class MIL_model(torch.nn.Module):
                 self.E = self.hidden_space_len
                 self.L = self.E
                 self.D = self.hidden_space_len
-                self.K = self.N_CLASSES
+                self.K = self.num_classes
 
             elif ('resnet50' in self.model.model_name):
                 self.E = 256
                 self.L = self.E
                 self.D = 256
-                self.K = self.N_CLASSES
+                self.K = self.num_classes
 
-            self.embedding = torch.nn.Linear(in_features=self.fc_feat_in, out_features=self.E)
+            self.embedding = torch.nn.Linear(in_features=self.fc_input_features, out_features=self.E)
             self.post_embedding = torch.nn.Linear(in_features=self.E, out_features=self.E)
 
         else:
-            self.fc = torch.nn.Linear(in_features=self.fc_feat_in, out_features=self.N_CLASSES)
+            self.fc = torch.nn.Linear(in_features=self.fc_input_features, out_features=self.num_classes)
 
             if ('resnet34' in self.model.model_name):
                 self.L = self.fc_input_features
@@ -44,7 +44,7 @@ class MIL_model(torch.nn.Module):
             elif ('resnet50' in self.model.model_name):
                 self.L = self.E
                 self.D = 256
-                self.K = self.N_CLASSES
+                self.K = self.num_classes
 		
         if (self.model.pool_algorithm=="attention"):
             self.attention = torch.nn.Sequential(
@@ -78,7 +78,7 @@ class MIL_model(torch.nn.Module):
             conv_layers_out=self.conv_layers(x)
             #print(x.shape)
 
-            conv_layers_out = conv_layers_out.view(-1, self.fc_feat_in)
+            conv_layers_out = conv_layers_out.view(-1, self.fc_input_features)
 
         n_patches = conv_layers_out.shape[0]
 

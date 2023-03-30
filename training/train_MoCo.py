@@ -23,10 +23,10 @@ thispath = Path(__file__).resolve()
 
 datadir = Path(thispath.parent.parent / "data")
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
-def train(encoder, momentum_encoder, optimizer, transform, preprocess, cfg, outputdir):
+def train(encoder, momentum_encoder, optimizer, scheduler, transform, preprocess, cfg, outputdir):
     # Training
     logging.info("== Start training ==")
     start_time = time.time()
@@ -79,7 +79,8 @@ def train(encoder, momentum_encoder, optimizer, transform, preprocess, cfg, outp
         #accumulator loss for the outputs
         train_loss_moco = 0.0
 
-        logging.info(f"Initializing a queue with {num_keys} keys")
+        logging.info(f"== Initializing a queue with {num_keys} keys ==")
+        start_time_queue = time.time()
         queue = []
 
         # dataloader_iterator = iter(dataloader_bag)
@@ -102,8 +103,8 @@ def train(encoder, momentum_encoder, optimizer, transform, preprocess, cfg, outp
                 if i == (num_keys / batch_size) - 1:
                     break
             queue = torch.cat(queue, dim=0)
-
-        logging.info("Queue done")
+        message = timer(start_time_queue, time.time())
+        logging.info(f"== Queue done in {message} ==")
 
         # dataloader_iterator = iter(dataloader_bag)
 
@@ -221,7 +222,9 @@ def train(encoder, momentum_encoder, optimizer, transform, preprocess, cfg, outp
             if (total_iters%200==True):
                 wandb.log({"iterations": cont_iterations_tot})
                 wandb.define_metric("train/loss_iter", step_metric="iterations")
+                wandb.define_metric("train/lr_iter", step_metric="iterations")
                 wandb.log({"train/loss_iter": train_loss_moco})
+                wandb.log({"train/lr_iter": optimizer.param_groups[0]["lr"]})
 
                 if (best_loss>train_loss_moco):
                     best_epoch = epoch
@@ -237,6 +240,7 @@ def train(encoder, momentum_encoder, optimizer, transform, preprocess, cfg, outp
                         torch.save({'epoch': epoch,
                                     'encoder_state_dict': encoder.state_dict(),
                                     'optimizer_state_dict': optimizer.state_dict(),
+                                    'scheduler_state_dict': scheduler.state_dict(),
                                     'loss': train_loss_moco},
                                     model_filename,
                                     _use_new_zipfile_serialization=False)
@@ -244,6 +248,7 @@ def train(encoder, momentum_encoder, optimizer, transform, preprocess, cfg, outp
                         torch.save({'epoch': epoch,
                                     'encoder_state_dict': encoder.state_dict(),
                                     'optimizer_state_dict': optimizer.state_dict(),
+                                    'scheduler_state_dict': scheduler.state_dict(),
                                     'loss': best_loss},
                                     model_filename)
                         
@@ -252,6 +257,7 @@ def train(encoder, momentum_encoder, optimizer, transform, preprocess, cfg, outp
                         torch.save({'epoch': epoch,
                                     'encoder_state_dict': encoder.state_dict(),
                                     'optimizer_state_dict': optimizer.state_dict(),
+                                    'scheduler_state_dict': scheduler.state_dict(),
                                     'loss': train_loss_moco}, 
                                     model_temporary_filename, 
                                     _use_new_zipfile_serialization=False)
@@ -259,13 +265,15 @@ def train(encoder, momentum_encoder, optimizer, transform, preprocess, cfg, outp
                         torch.save({'epoch': epoch,
                                     'encoder_state_dict': encoder.state_dict(),
                                     'optimizer_state_dict': optimizer.state_dict(),
+                                    'scheduler_state_dict': scheduler.state_dict(),
                                     'loss': train_loss_moco}, 
                                     model_temporary_filename)
 
                 torch.cuda.empty_cache()
     
         # Update learning rate
-        #update_lr(epoch)
+        # Scheduler update
+        scheduler.step()
 
         wandb.define_metric("train/lr", step_metric="epoch")
         wandb.define_metric("train/loss", step_metric="epoch")
@@ -361,7 +369,7 @@ def main(config_file):
     model = ModelOption(cfg.model.model_name,
                 cfg.model.num_classes,
                 freeze=cfg.model.freeze_weights,
-                num_freezed_layers=cfg.model.num_frozen_layers,
+                num_freezed_layers=cfg.model.num_freezed_layers,
                 dropout=cfg.model.dropout,
                 embedding_bool=cfg.model.embedding_bool
                 )    
@@ -457,8 +465,8 @@ def main(config_file):
     optimizer = getattr(torch.optim, cfg.training.optimizer)
     optimizer = optimizer(encoder.parameters(), **cfg.training.optimizer_args)
 
-    # scheduler = getattr(torch.optim.lr_scheduler, cfg.training.lr_scheduler)
-    # scheduler = scheduler(optimizer, **cfg.training.lr_scheduler_args)
+    scheduler = getattr(torch.optim.lr_scheduler, cfg.training.lr_scheduler)
+    scheduler = scheduler(optimizer, **cfg.training.lr_scheduler_args)
 
     # Initialize momentum_encoder with parameters of encoder.
     momentum_step(encoder, momentum_encoder, m=0)
@@ -473,6 +481,7 @@ def main(config_file):
     train(encoder, 
           momentum_encoder,
           optimizer,
+          scheduler,
           pipeline_transform, 
           preprocess, 
           cfg,
