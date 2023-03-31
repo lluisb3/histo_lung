@@ -66,7 +66,7 @@ class Dataset_instance_MIL(Dataset):
         self.preprocess = preprocess
 
     def __len__(self):
-        return len(self.list_IDs)
+        return len(self.wsi_path_patches)
 
     def __getitem__(self, index):
         # Select sample

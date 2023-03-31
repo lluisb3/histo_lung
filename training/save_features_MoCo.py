@@ -56,16 +56,20 @@ def MoCo_features(exp_name):
     pyhistdir = Path(datadir / "Mask_PyHIST_v2")
 
     dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
+    dataset_name = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_metadata.csv")])
 
     path_patches = []
     patches_names = []
-    for wsi_patches in tqdm(dataset_path, desc="Selecting patches to check model"):
+    for wsi_patches_path, wsi_patches_names in tqdm(zip(dataset_path, dataset_name),
+                                                    desc="Selecting patches: "):
 
-        csv_instances = pd.read_csv(wsi_patches).to_numpy()
+        csv_patch_path = pd.read_csv(wsi_patches_path).to_numpy()
+        csv_patch_names = pd.read_csv(wsi_patches_names, index_col=0)
 
-        path_patches.extend(csv_instances)
-        for instance in csv_instances:
-            patches_names.append(str(instance).split("/")[-1])
+        names = csv_patch_names.index.to_numpy()
+
+        path_patches.extend(csv_patch_path)
+        patches_names.extend(names)
 
     preprocess = transforms.Compose([
             transforms.ToTensor(),
@@ -77,7 +81,7 @@ def MoCo_features(exp_name):
     params_instance = {'batch_size': 1024,
                        'shuffle': False,
                        'pin_memory': True,
-                       'num_workers': 2}
+                       'num_workers': 8}
 
     instances = Dataset_instance(path_patches, transform=None, preprocess=preprocess)
     generator = DataLoader(instances, **params_instance)
@@ -93,7 +97,7 @@ def MoCo_features(exp_name):
 
             q = encoder(x_q)
             q = q.squeeze().cpu().numpy()
-            print(len(q))
+
             feature_matrix[i*len(q):(i+1)*len(q), :] = q
 
     df_feature = pd.DataFrame(feature_matrix, index=patches_names, columns=range(moco_dim))

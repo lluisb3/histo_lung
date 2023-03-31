@@ -1,7 +1,6 @@
 from pathlib import Path
-import sys
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 import numpy as np
 import pandas as pd
 import albumentations as A
@@ -12,7 +11,6 @@ import torch.utils.data
 from torchvision import transforms
 from sklearn import metrics 
 import os
-import argparse
 from natsort import natsorted
 from transformers import BertModel, BertPreTrainedModel, RobertaConfig, RobertaModel
 from transformers import BertTokenizer, BertForSequenceClassification, AdamW, get_linear_schedule_with_warmup
@@ -21,10 +19,9 @@ from transformers import LongformerConfig, LongformerModel, LongformerSelfAttent
 from transformers import RobertaTokenizer, RobertaForMaskedLM, RobertaForSequenceClassification, AutoTokenizer
 
 from ast import literal_eval
-from database import Dataset_instance, Dataset_instance_MIL, Dataset_bag_MIL
+from database import Dataset_instance_MIL, Dataset_bag_MIL
 from training.mil import MIL_model
 from training.models import ModelOption
-from training.encoder import Encoder
 from training.utils_trainig import momentum_step, contrastive_loss, update_queue
 from training.utils_trainig import yaml_load, initialize_wandb, edict2dict
 from utils import timer
@@ -153,14 +150,14 @@ def generate_transformer(label, prob = 0.5):
     return pipeline_transform
 
 
-def get_generator_instances(csv_instances, preprocess, batch_size, pipeline_transform, num_workers):
+def get_generator_instances(csv_patches_path, preprocess, batch_size, pipeline_transform, num_workers):
 
     params_instance = {'batch_size': batch_size,
                     'num_workers': num_workers,
                     'pin_memory': True,
                     'shuffle': True}
 
-    instances = Dataset_instance(csv_instances, pipeline_transform, preprocess)
+    instances = Dataset_instance_MIL(csv_patches_path, pipeline_transform, preprocess)
     generator = DataLoader(instances, **params_instance)
 
     return generator
@@ -176,7 +173,7 @@ def accuracy_micro(y_true, y_pred):
     
 def accuracy_macro(y_true, y_pred):
 
-    n_classes = len(y_true[0])
+    n_classes = 4
 
     acc_tot = 0.0
 
@@ -191,7 +188,15 @@ def accuracy_macro(y_true, y_pred):
     return acc_tot
 
 
-def evaluate_validation_set(net, criterion, generator, features_valid):
+def evaluate_validation_set(net, 
+                            criterion, 
+                            generator, 
+                            validation_dataset, 
+                            patches_validation, 
+                            epoch, 
+                            preprocess, 
+                            batch_size,
+                            num_workers):
     #accumulator for validation set
     y_pred = []
     y_true = []
@@ -200,23 +205,52 @@ def evaluate_validation_set(net, criterion, generator, features_valid):
 
     net.eval()
 
+    iterations = int(len(validation_dataset))+1
+    dataloader_iterator = iter(generator)
     with torch.no_grad():
-        for i, (wsi_id, labels) in enumerate(generator):
+        for i in range(iterations):
+            logging.info('[%d], %d / %d ' % (epoch + 1, i + 1, iterations))
+            try:
+                wsi_id, labels = next(dataloader_iterator)
+            except StopIteration:
+                dataloader_iterator = iter(generator)
+                wsi_id, labels = next(dataloader_iterator)
+                #inputs: bags, labels: labels of the bags
 
-            label_wsi = labels[0].cpu().numpy().flatten()
-    
+            wsi_id = wsi_id[0]
+            labels = torch.stack(labels)
+            labels_np = labels.cpu().numpy().flatten()
+
             labels_local = labels.float().flatten().to(device, non_blocking=True)
 
-            #read csv with instances
-            # n_indices = len(features_np)
-            # #indices = np.random.choice(n_indices,n_indices,replace=False)
-            # indices = np.random.permutation(n_indices)
-            # features_np = features_np[indices]
-            features_wsi = features_valid.loc[wsi_id].values
-            inputs = torch.as_tensor(features_wsi).float().to(device, non_blocking=True)
+            validation_generator_instance = get_generator_instances(patches_validation[wsi_id], 
+                                                                  preprocess,
+                                                                  batch_size, 
+                                                                  None,
+                                                                  num_workers) 
 
-            logits_img, _ = net(None, inputs)
+            n_elems = len(patches_validation[wsi_id])   
+
+            features = []
             
+            for instances in validation_generator_instance:
+                instances = instances.to(device, non_blocking=True)
+
+                # forward + backward + optimize
+                feats = net.conv_layers(instances)
+                feats = feats.view(-1, net.fc_input_features)
+                feats_np = feats.cpu().data.numpy()
+
+                features = np.append(features, feats_np)
+
+                    #del instances
+                #del instances
+            features_np = np.reshape(features,(n_elems, net.fc_input_features))
+
+
+            inputs = torch.tensor(features_np).float().to(device, non_blocking=True)
+        
+            logits_img, _ = net(None, inputs)
             #loss img
             loss_img = criterion(logits_img, labels_local)
 
@@ -229,13 +263,63 @@ def evaluate_validation_set(net, criterion, generator, features_valid):
 
             output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
 
-            y_pred = np.append(y_pred,output_norm)
-            y_true = np.append(y_true,label_wsi)
+            y_pred = np.append(y_pred, output_norm)
+            y_true = np.append(y_true, labels_np)
 
             micro_accuracy_train = accuracy_micro(y_true, y_pred)
             logging.info("micro_accuracy " + str(micro_accuracy_train))    
     
     return validation_loss, micro_accuracy_train
+
+    # with torch.no_grad():
+    #     for i, (wsi_id, labels) in enumerate(generator):
+            
+    #         labels = torch.cat(labels)
+
+    #         label_wsi = labels.cpu().numpy().flatten()
+    
+    #         labels_local = labels.float().flatten().to(device, non_blocking=True)
+    #         print(features)
+    #         print(type(wsi_id))
+    #         #read csv with instances
+    #         # n_indices = len(features_np)
+    #         # #indices = np.random.choice(n_indices,n_indices,replace=False)
+    #         # indices = np.random.permutation(n_indices)
+    #         # features_np = features_np[indices]
+    #         features_wsi = features.loc[patch_name].values
+
+    #         # params_instance = {'batch_size': 256,
+    #         #         'num_workers': 4,
+    #         #         'pin_memory': True,
+    #         #         'shuffle': False}
+
+    #         # generator = DataLoader(features_wsi, **params_instance)
+            
+    #         # for features in generator:
+
+    #         inputs = torch.as_tensor(features_wsi).float().to(device, non_blocking=True)
+        
+
+    #         logits_img, _ = net(None, inputs.T)
+    #         #loss img
+    #         loss_img = criterion(logits_img, labels_local)
+
+    #         sigmoid_output_img = F.sigmoid(logits_img)
+    #         outputs_wsi_np_img = sigmoid_output_img.cpu().data.numpy()
+    #         validation_loss = validation_loss + ((1 / (i+1)) * (loss_img.item() - validation_loss))
+            
+    #         logging.info("pred_img: " + str(outputs_wsi_np_img))
+    #         logging.info("validation_loss: " + str(validation_loss))
+
+    #         output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
+
+    #         y_pred = np.append(y_pred, output_norm)
+    #         y_true = np.append(y_true, label_wsi)
+
+    #         micro_accuracy_train = accuracy_micro(y_true, y_pred)
+    #         logging.info("micro_accuracy " + str(micro_accuracy_train))    
+    
+    # return validation_loss, micro_accuracy_train
 
 
 @click.command()
@@ -261,12 +345,12 @@ def main(config_file, exp_name_moco):
     Path(outputdir).mkdir(exist_ok=True, parents=True)
 
     # wandb login
-    # wandb.login()
+    wandb.login()
 
-    # if cfg.wandb.enable:
-    #         # key = os.environ.get("WANDB_API_KEY")
-    #         wandb_run = initialize_wandb(cfg, outputdir)
-    #         wandb_run.define_metric("epoch", summary="max")
+    if cfg.wandb.enable:
+            # key = os.environ.get("WANDB_API_KEY")
+            wandb_run = initialize_wandb(cfg, outputdir)
+            wandb_run.define_metric("epoch", summary="max")
 
     # For logging
     logging.basicConfig(format='%(asctime)s %(levelname)s:%(message)s',
@@ -384,35 +468,41 @@ def main(config_file, exp_name_moco):
     pyhistdir = Path(datadir / "Mask_PyHIST_v2")
 
     dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
+    dataset_name = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_metadata.csv")])
 
     patches_path = {}
     patches_names = {}
-    for wsi_patches in tqdm(dataset_path, desc="Selecting patches to extract features"):
+    for wsi_patches_path, wsi_patches_names in tqdm(zip(dataset_path, dataset_name),
+                                                    desc="Selecting patches: "):
 
-        csv_instances = pd.read_csv(wsi_patches).to_numpy()
+        csv_patch_path = pd.read_csv(wsi_patches_path).to_numpy()
+        csv_patch_names = pd.read_csv(wsi_patches_names, index_col=0)
+
+        names = csv_patch_names.index.to_numpy()
         
-        name = wsi_patches.parent.stem
-        patches_path[name] = csv_instances
-        patches_names[name] = []
+        name = wsi_patches_path.parent.stem
+        patches_path[name] = csv_patch_path
+        # patches_names[name] = [names]
 
-        for instance in csv_instances:
-                patches_names[name].append(str(instance).split("/")[-1])
+        # patches_names[name] = []
+        # for instance in csv_patch_path:
+        #         patches_names[name].append(str(instance).split("/")[-1])
 
     logging.info(f"Total number of patches for train/validation/test {len(patches_path)}")
 
     patches_train = {}
-    patches_validation = []
+    patches_validation = {}
     patches_test = []
-    for value, key in zip(patches_names.values(), patches_names.keys()):
+    for value, key in zip(patches_path.values(), patches_path.keys()):
         if key in train_dataset:
             patches_train[key] = value
         if key in validation_dataset:
-            patches_validation.extend(value)
+            patches_validation[key] = value
         if key in test_dataset:
             patches_test.extend(value)
 
-    logging.info(f"Total number of patches for train {len(patches_train)}")
-    logging.info(f"Total number of patches for validation {len(patches_validation)}")
+    logging.info(f"Total number of wsi for train {len(patches_train.values())}")
+    logging.info(f"Total number of wsi for validation {len(patches_validation.values())}")
     logging.info(f"Total number of patches for test {len(patches_test)}")
 
     # Load datasets
@@ -422,7 +512,7 @@ def main(config_file, exp_name_moco):
     params_train_bag = {'batch_size': batch_size_bag,
                         'shuffle': True}
 
-    params_valid_bag = {'batch_size': len(validation_dataset),
+    params_valid_bag = {'batch_size': batch_size_bag, # len(validation_dataset),
                         'shuffle': False}
 
     training_set_bag = Dataset_bag_MIL(train_dataset, train_labels)
@@ -434,7 +524,7 @@ def main(config_file, exp_name_moco):
     # Load features from MoCo model
     experiment_name = exp_name_moco
 
-    logging.info(f"== Loading features from {experiment_name} ==")
+    logging.info(f"== Loading MoCo from {experiment_name} ==")
 
     mocodir = Path(thispath.parent.parent / 
                 "trained_models" / 
@@ -454,11 +544,11 @@ def main(config_file, exp_name_moco):
     # features_test = df_features.loc[patches_test]
 
     # Initialize Bert Tokenizer
-    logging.info("== Initialize BERT ==")
-    bert_chosen = 'emilyalsentzer/Bio_ClinicalBERT'
-    tokenizer = BertTokenizer.from_pretrained(bert_chosen)  
-    #tokenizer = AutoTokenizer.from_pretrained(bert_chosen)  
-    clinical_bert_token_size = 768
+    # logging.info("== Initialize BERT ==")
+    # bert_chosen = 'emilyalsentzer/Bio_ClinicalBERT'
+    # tokenizer = BertTokenizer.from_pretrained(bert_chosen)  
+    # #tokenizer = AutoTokenizer.from_pretrained(bert_chosen)  
+    # clinical_bert_token_size = 768
     #print(tokenizer)
 
     # Load pretrained model
@@ -482,6 +572,11 @@ def main(config_file, exp_name_moco):
     for name, param in net.conv_layers.named_parameters():
         #if '10' in name or '11' in name: 
         param.requires_grad = False
+
+    total_params = sum(p.numel() for p in net.parameters())
+    logging.info(f'{total_params:,} total parameters.')
+    total_trainable_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+    logging.info(f'{total_trainable_params:,} training parameters CNN.')
 
     # Data augmentation
     prob = cfg.data_augmentation.prob
@@ -543,7 +638,7 @@ def main(config_file, exp_name_moco):
 
     while (epoch<cfg.training.epochs and early_stop_cont<early_stop):
 
-        # wandb.log({"epoch": epoch + 1})
+        wandb.log({"epoch": epoch + 1})
 
         start_time_epoch = time.time()
         total_iters = 0
@@ -578,13 +673,8 @@ def main(config_file, exp_name_moco):
         #     for param in net.embedding_before_fc.parameters():
         #         param.requires_grad = False		
 
-        total_params = sum(p.numel() for p in net.parameters())
-        logging.info(f'{total_params:,} total parameters.')
-        total_trainable_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-        logging.info(f'{total_trainable_params:,} training parameters CNN.')
-
         for i in range(iterations):
-            logging.info('[%d], %d / %d ' % (epoch + 1, i, iterations))
+            logging.info('[%d], %d / %d ' % (epoch + 1, i + 1, iterations))
             try:
                 wsi_id, labels = next(dataloader_iterator)
             except StopIteration:
@@ -605,7 +695,7 @@ def main(config_file, exp_name_moco):
             #pipeline_transform = generate_transformer(labels_np[i_wsi])
             pipeline_transform = generate_transformer(labels_np)
 
-            training_generator_instance = get_generator_instances(patches_path[wsi_id], 
+            training_generator_instance = get_generator_instances(patches_train[wsi_id], 
                                                                   preprocess,
                                                                   batch_size, 
                                                                   pipeline_transform,
@@ -653,17 +743,17 @@ def main(config_file, exp_name_moco):
             total_iters = total_iters + 1
             cont_iterations_tot = cont_iterations_tot + 1
 
-            # if (total_iters%200==True):
-                # wandb.log({"iterations": cont_iterations_tot})
-                # wandb.define_metric("train/loss_iter", step_metric="iterations")
-                # wandb.log({"train/loss_iter": train_loss})
+            if (total_iters%200==True):
+                wandb.log({"iterations": cont_iterations_tot})
+                wandb.define_metric("train/loss_iter", step_metric="iterations")
+                wandb.log({"train/loss_iter": train_loss})
 
             loss.backward() 
 
             optimizer.step()
 
             optimizer.zero_grad(set_to_none=True)
-            model.zero_grad(set_to_none=True)
+            net.zero_grad(set_to_none=True)
             #bert_model.zero_grad()
 
             logging.info("pred_img: " + str(outputs_wsi_np_img))
@@ -679,15 +769,17 @@ def main(config_file, exp_name_moco):
 
             y_pred = np.append(y_pred, output_norm)
             y_true = np.append(y_true, labels_np)
-
+            # print(y_pred)
+            # print(y_true)
             micro_accuracy_train = accuracy_micro(y_true, y_pred)
             logging.info("micro_accuracy " + str(micro_accuracy_train))    
 
-        accuracy_train = accuracy_macro(y_true, y_pred)
-        # wandb.define_metric("train/loss", step_metric="epoch")
-        # wandb.log({"train/loss": train_loss})
-        # wandb.define_metric("train/accuracy", step_metric="epoch")
-        # wandb.log({"train/accuracy": micro_accuracy_train})
+        # accuracy_train = accuracy_macro(y_true, y_pred)
+        wandb.define_metric("train/loss", step_metric="epoch")
+        wandb.log({"train/loss": train_loss})
+        wandb.define_metric("train/accuracy", step_metric="epoch")
+        wandb.log({"train/accuracy": micro_accuracy_train})
+        logging.info(f"Accuracy train Epoch {epoch + 1}: {micro_accuracy_train}")
 
         #save_training predictions
         filename_training_predictions = Path(outputdir / f"training_predictions_{epoch}.csv")
@@ -698,7 +790,7 @@ def main(config_file, exp_name_moco):
                 'pred_nscc_squamoous': pred_nscc_squamoous, 
                 'pred_normal': pred_normal}
 
-        df_predictions = pd.dataframe.from_dict(File)
+        df_predictions = pd.DataFrame.from_dict(File)
         df_predictions.to_csv(filename_training_predictions)
 
         #bert_model.eval()
@@ -710,15 +802,20 @@ def main(config_file, exp_name_moco):
 
         logging.info("== Validation ==")
         valid_loss, accuracy_validation = evaluate_validation_set(net, 
-                                                                criterion, 
-                                                                epoch, 
-                                                                validation_generator_bag,
-                                                                features_valid)
-      
-        # wandb.define_metric("validation/loss", step_metric="epoch")
-        # wandb.log({"validation/loss": valid_loss})
-        # wandb.define_metric("validation/accuracy", step_metric="epoch")
-        # wandb.log({"validation/accuracy": accuracy_validation})
+                                                                  criterion, 
+                                                                  validation_generator_bag,
+                                                                  validation_dataset,
+                                                                  patches_validation,
+                                                                  epoch,
+                                                                  preprocess,
+                                                                  batch_size,
+                                                                  cfg.dataloader.num_workers)
+        
+        # Wandb 
+        wandb.define_metric("validation/loss", step_metric="epoch")
+        wandb.log({"validation/loss": valid_loss})
+        wandb.define_metric("validation/accuracy", step_metric="epoch")
+        wandb.log({"validation/accuracy": accuracy_validation})
 
         # Create directories for the outputs
         outputdir_results = Path(outputdir /
@@ -763,7 +860,7 @@ def main(config_file, exp_name_moco):
                 'pred_nscc_squamoous': pred_nscc_squamoous, 
                 'pred_normal': pred_normal}
 
-            df_predictions = pd.dataframe.from_dict(File)
+            df_predictions = pd.DataFrame.from_dict(File)
             df_predictions.to_csv(filename_training_predictions)
 
         else:
