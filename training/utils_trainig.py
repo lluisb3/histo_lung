@@ -12,8 +12,8 @@ thispath = Path(__file__).resolve()
 
 
 def cosine_similarity(a, b):
-    cosine = np.dot(a,b)/(norm(a)*norm(b))
-    print(f"Cosine Similarity: {cosine}")
+    
+    return np.dot(a,b)/(norm(a)*norm(b))
 
 
 def edict2dict(edict_obj):

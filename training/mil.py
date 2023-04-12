@@ -25,10 +25,10 @@ class MIL_model(torch.nn.Module):
                 self.D = self.hidden_space_len
                 self.K = self.num_classes
 
-            elif ('resnet50' in self.model.model_name):
-                self.E = 256
+            elif ('resnet101' in self.model.model_name):
+                self.E = self.hidden_space_len
                 self.L = self.E
-                self.D = 256
+                self.D = self.hidden_space_len
                 self.K = self.num_classes
 
             self.embedding = torch.nn.Linear(in_features=self.fc_input_features, out_features=self.E)
@@ -41,9 +41,9 @@ class MIL_model(torch.nn.Module):
                 self.L = self.fc_input_features
                 self.D = self.hidden_space_len
                 self.K = self.N_CLAS                
-            elif ('resnet50' in self.model.model_name):
+            elif ('resnet101' in self.model.model_name):
                 self.L = self.E
-                self.D = 256
+                self.D = self.hidden_space_len
                 self.K = self.num_classes
 		
         if (self.model.pool_algorithm=="attention"):

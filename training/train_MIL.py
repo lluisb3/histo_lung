@@ -8,8 +8,11 @@ import time
 from tqdm import tqdm
 import torch.nn.functional as F
 import torch.utils.data
+from torch.optim import Adam
 from torchvision import transforms
-from sklearn import metrics 
+from sklearn.metrics import accuracy_score, roc_curve, auc, roc_auc_score
+import matplotlib.pyplot as plt
+import seaborn as sns
 import os
 from natsort import natsorted
 from transformers import BertModel, BertPreTrainedModel, RobertaConfig, RobertaModel
@@ -22,8 +25,8 @@ from ast import literal_eval
 from database import Dataset_instance_MIL, Dataset_bag_MIL
 from training.mil import MIL_model
 from training.models import ModelOption
-from training.utils_trainig import momentum_step, contrastive_loss, update_queue
 from training.utils_trainig import yaml_load, initialize_wandb, edict2dict
+import yaml
 from utils import timer
 import wandb
 import logging
@@ -168,7 +171,7 @@ def accuracy_micro(y_true, y_pred):
     y_true_flatten = y_true.flatten()
     y_pred_flatten = y_pred.flatten()
     
-    return metrics.accuracy_score(y_true_flatten, y_pred_flatten)
+    return accuracy_score(y_true_flatten, y_pred_flatten)
 
     
 def accuracy_macro(y_true, y_pred):
@@ -179,7 +182,7 @@ def accuracy_macro(y_true, y_pred):
 
     for i in range(n_classes):
 
-        acc = metrics.accuracy_score(y_true[i,:], y_pred[i,:])
+        acc = accuracy_score(y_true[i,:], y_pred[i,:])
         #print(acc)
         acc_tot = acc_tot + acc
 
@@ -188,24 +191,32 @@ def accuracy_macro(y_true, y_pred):
     return acc_tot
 
 
-def evaluate_validation_set(net, 
-                            criterion, 
-                            generator, 
-                            validation_dataset, 
-                            patches_validation, 
-                            epoch, 
-                            preprocess, 
-                            batch_size,
-                            num_workers):
-    #accumulator for validation set
-    y_pred = []
-    y_true = []
+def validation(cfg,
+               net,
+               criterion,
+               generator,
+               patches_validation,
+               preprocess,
+               iterations,
+               epoch):
+    
+    logging.info("== Validation ==")
 
     validation_loss = 0.0
+    
+    #accumulator for validation set
+    filenames_wsis = []
+    pred_scc = []
+    pred_nscc_adeno = []
+    pred_nscc_squamous = []
+    pred_normal = []
+
+    y_pred = []
+    y_true = []
+    scores_pred = []
 
     net.eval()
-
-    iterations = int(len(validation_dataset))+1
+    
     dataloader_iterator = iter(generator)
     with torch.no_grad():
         for i in range(iterations):
@@ -224,10 +235,10 @@ def evaluate_validation_set(net,
             labels_local = labels.float().flatten().to(device, non_blocking=True)
 
             validation_generator_instance = get_generator_instances(patches_validation[wsi_id], 
-                                                                  preprocess,
-                                                                  batch_size, 
-                                                                  None,
-                                                                  num_workers) 
+                                                                    preprocess,
+                                                                    cfg.dataloader.batch_size, 
+                                                                    None,
+                                                                    cfg.dataloader.num_workers) 
 
             n_elems = len(patches_validation[wsi_id])   
 
@@ -241,12 +252,11 @@ def evaluate_validation_set(net,
                 feats = feats.view(-1, net.fc_input_features)
                 feats_np = feats.cpu().data.numpy()
 
-                features = np.append(features, feats_np)
+                features.extend(feats_np)
 
                     #del instances
                 #del instances
             features_np = np.reshape(features,(n_elems, net.fc_input_features))
-
 
             inputs = torch.tensor(features_np).float().to(device, non_blocking=True)
         
@@ -258,68 +268,201 @@ def evaluate_validation_set(net,
             outputs_wsi_np_img = sigmoid_output_img.cpu().data.numpy()
             validation_loss = validation_loss + ((1 / (i+1)) * (loss_img.item() - validation_loss))
             
-            logging.info("pred_img: " + str(outputs_wsi_np_img))
-            logging.info("validation_loss: " + str(validation_loss))
+            logging.info(f"pred_img: {outputs_wsi_np_img}")
+            logging.info(f"validation_loss: {validation_loss}")
+
+            filenames_wsis.append(wsi_id)
+            pred_scc.append(outputs_wsi_np_img[0])
+            pred_nscc_adeno.append(outputs_wsi_np_img[1])
+            pred_nscc_squamous.append(outputs_wsi_np_img[2])
+            pred_normal.append(outputs_wsi_np_img[3])
 
             output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
 
             y_pred = np.append(y_pred, output_norm)
             y_true = np.append(y_true, labels_np)
-
+            scores_pred= np.append(scores_pred, outputs_wsi_np_img)
+            
             micro_accuracy_train = accuracy_micro(y_true, y_pred)
-            logging.info("micro_accuracy " + str(micro_accuracy_train))    
+            logging.info(f"micro_accuracy valid {micro_accuracy_train}") 
+
+        File = {'filenames': filenames_wsis,
+        'pred_scc': pred_scc, 
+        'pred_nscc_adeno': pred_nscc_adeno,
+        'pred_nscc_squamous': pred_nscc_squamous, 
+        'pred_normal': pred_normal}
+
+        df_predictions = pd.DataFrame.from_dict(File)   
     
-    return validation_loss, micro_accuracy_train
+    return y_true, scores_pred, validation_loss, micro_accuracy_train, df_predictions
 
-    # with torch.no_grad():
-    #     for i, (wsi_id, labels) in enumerate(generator):
-            
-    #         labels = torch.cat(labels)
+def train(cfg, 
+          net, 
+          criterion, 
+          optimizer,
+          scheduler, 
+          generator, 
+          patches_train, 
+          preprocess, 
+          iterations, 
+          epoch,
+          cont_iterations_tot, 
+          outputdir):
 
-    #         label_wsi = labels.cpu().numpy().flatten()
+    logging.info("== Training ==")
+
+    total_iters = 0
+    train_loss = 0.0
     
-    #         labels_local = labels.float().flatten().to(device, non_blocking=True)
-    #         print(features)
-    #         print(type(wsi_id))
-    #         #read csv with instances
-    #         # n_indices = len(features_np)
-    #         # #indices = np.random.choice(n_indices,n_indices,replace=False)
-    #         # indices = np.random.permutation(n_indices)
-    #         # features_np = features_np[indices]
-    #         features_wsi = features.loc[patch_name].values
+    filenames_wsis = []
+    pred_scc = []
+    pred_nscc_adeno = []
+    pred_nscc_squamous = []
+    pred_normal = []
 
-    #         # params_instance = {'batch_size': 256,
-    #         #         'num_workers': 4,
-    #         #         'pin_memory': True,
-    #         #         'shuffle': False}
+    y_pred = []
+    y_true = []
+    scores_pred = []
 
-    #         # generator = DataLoader(features_wsi, **params_instance)
+    dataloader_iterator = iter(generator)
+
+    net.train()
+
+    # if (flag_dataset=='finetune_pretrain'):
+    #     for param in net.embedding.parameters():
+    #         param.requires_grad = False
+
+    #     for param in net.attention.parameters():
+    #         param.requires_grad = False
             
-    #         # for features in generator:
+    #     for param in net.embedding_before_fc.parameters():
+    #         param.requires_grad = False		
 
-    #         inputs = torch.as_tensor(features_wsi).float().to(device, non_blocking=True)
+    for i in range(iterations):
+        logging.info('[%d], %d / %d ' % (epoch + 1, i + 1, iterations))
+        try:
+            wsi_id, labels = next(dataloader_iterator)
+        except StopIteration:
+            dataloader_iterator = iter(generator)
+            wsi_id, labels = next(dataloader_iterator)
+            #inputs: bags, labels: labels of the bags
         
+        wsi_id = wsi_id[0]
+        labels = torch.stack(labels)
+        labels_np = labels.cpu().numpy().flatten()
 
-    #         logits_img, _ = net(None, inputs.T)
-    #         #loss img
-    #         loss_img = criterion(logits_img, labels_local)
+        labels_local = labels.float().flatten().to(device, non_blocking=True)
 
-    #         sigmoid_output_img = F.sigmoid(logits_img)
-    #         outputs_wsi_np_img = sigmoid_output_img.cpu().data.numpy()
-    #         validation_loss = validation_loss + ((1 / (i+1)) * (loss_img.item() - validation_loss))
-            
-    #         logging.info("pred_img: " + str(outputs_wsi_np_img))
-    #         logging.info("validation_loss: " + str(validation_loss))
-
-    #         output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
-
-    #         y_pred = np.append(y_pred, output_norm)
-    #         y_true = np.append(y_true, label_wsi)
-
-    #         micro_accuracy_train = accuracy_micro(y_true, y_pred)
-    #         logging.info("micro_accuracy " + str(micro_accuracy_train))    
+        # print("[" + str(i) + "/" + str(len(train_dataset)) + "], " + "inputs_bag: " + str(wsi_id))
+        # print("labels: " + str(labels_np))
     
-    # return validation_loss, micro_accuracy_train
+
+        #pipeline_transform = generate_transformer(labels_np[i_wsi])
+        pipeline_transform = generate_transformer(labels_np)
+
+        training_generator_instance = get_generator_instances(patches_train[wsi_id], 
+                                                              preprocess,
+                                                              cfg.dataloader.batch_size, 
+                                                              pipeline_transform,
+                                                              cfg.dataloader.num_workers) 
+        
+        n_elems = len(patches_train[wsi_id])                                            
+        net.eval()
+
+        features = []
+        with torch.no_grad():
+            for instances in training_generator_instance:
+                instances = instances.to(device, non_blocking=True)
+
+                # forward + backward + optimize
+                feats = net.conv_layers(instances)
+                feats = feats.view(-1, net.fc_input_features)
+                feats_np = feats.cpu().data.numpy()
+
+                features.extend(feats_np)
+
+                #del instances
+            #del instances
+        features_np = np.reshape(features,(n_elems, net.fc_input_features))
+
+        #torch.cuda.empty_cache()
+        #del features, feats
+
+        net.train()
+        net.zero_grad(set_to_none=True)
+
+        inputs_embedding = torch.tensor(features_np, requires_grad=True).float().to(device, non_blocking=True)
+
+        logits_img, cls_img = net(None, inputs_embedding)
+        
+        #loss img
+        loss_img = criterion(logits_img, labels_local)
+        
+        #loss_classification = (loss_img + loss_neg) / 2
+        loss = loss_img
+
+        sigmoid_output_img = F.sigmoid(logits_img)
+        outputs_wsi_np_img = sigmoid_output_img.cpu().data.numpy()
+        train_loss = train_loss + ((1 / (i+1)) * (loss.item() - train_loss))
+        
+        total_iters = total_iters + 1
+        cont_iterations_tot = cont_iterations_tot + 1
+        
+        if (total_iters%200==True):
+            if cfg.wandb.enable:
+                wandb.log({"iterations": cont_iterations_tot})
+                wandb.define_metric("train/loss_iter", step_metric="iterations")
+                wandb.log({"train/loss_iter": train_loss})
+
+        loss.backward() 
+
+        optimizer.step()
+
+        optimizer.zero_grad(set_to_none=True)
+        net.zero_grad(set_to_none=True)
+        #bert_model.zero_grad()
+
+        logging.info(f"pred_img: {outputs_wsi_np_img}")
+        logging.info(f"train_loss: {train_loss}")
+
+        filenames_wsis.append(wsi_id)
+        pred_scc.append(outputs_wsi_np_img[0])
+        pred_nscc_adeno.append(outputs_wsi_np_img[1])
+        pred_nscc_squamous.append(outputs_wsi_np_img[2])
+        pred_normal.append(outputs_wsi_np_img[3])
+
+        output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
+        y_pred = np.append(y_pred, output_norm)
+        y_true = np.append(y_true, labels_np)
+        
+        scores_pred= np.append(scores_pred, outputs_wsi_np_img)
+
+        # print(y_pred)
+        # print(y_true)
+        micro_accuracy_train = accuracy_micro(y_true, y_pred)
+        logging.info(f"micro_accuracy train: {micro_accuracy_train}")
+
+    scheduler.step()
+
+    File = {'filenames': filenames_wsis,
+            'pred_scc': pred_scc, 
+            'pred_nscc_adeno': pred_nscc_adeno,
+            'pred_nscc_squamous': pred_nscc_squamous, 
+            'pred_normal': pred_normal}
+
+    df_predictions = pd.DataFrame.from_dict(File)
+
+    model_weights_filename_checkpoint = Path(outputdir /'checkpoint.pt')
+    #save checkpoint
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': net.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
+        'loss': loss},
+        model_weights_filename_checkpoint)
+        
+    return y_true, scores_pred, train_loss, micro_accuracy_train, df_predictions
 
 
 @click.command()
@@ -331,7 +474,7 @@ def evaluate_validation_set(net,
 )
 @click.option(
     "--exp_name_moco",
-    default="MoCo_try_cpu_256_resnet34",
+    default="MoCo_resnet34_scheduler_51015",
     prompt="Name of the MoCo experiment",
     help="Name of the MoCo experiment",
 )
@@ -344,10 +487,13 @@ def main(config_file, exp_name_moco):
     outputdir = Path(thispath.parent.parent / "trained_models" / "MIL" / f"{cfg.experiment_name}")
     Path(outputdir).mkdir(exist_ok=True, parents=True)
 
-    # wandb login
-    wandb.login()
+    # Save config parameters for experiment
+    with open(Path(f"{outputdir}/config_{cfg.experiment_name}.yml"), 'w') as yaml_file:
+        yaml.dump(edict2dict(cfg), yaml_file, default_flow_style=False)
 
+    # wandb login
     if cfg.wandb.enable:
+            wandb.login()
             # key = os.environ.get("WANDB_API_KEY")
             wandb_run = initialize_wandb(cfg, outputdir)
             wandb_run.define_metric("epoch", summary="max")
@@ -601,221 +747,194 @@ def main(config_file, exp_name_moco):
     criterion = getattr(torch.nn, cfg.training.criterion)()
 
     # Optimizer
+    param_optimizer_cfg = cfg.training.optimizer_args
+    
+    lr = param_optimizer_cfg.lr
+    wt_decay = param_optimizer_cfg.weight_decay
+    betas = param_optimizer_cfg.betas
+    eps = param_optimizer_cfg.eps
+    amsgrad = param_optimizer_cfg.amsgrad
 
-    optimizer = getattr(torch.optim, cfg.training.optimizer)
-    optimizer = optimizer(net.parameters(), **cfg.training.optimizer_args)
+    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight",'prelu']
+    emb_par = ["img_embeddings_encoder.weight", "embedding_fc.weight"]
 
-    # scheduler = getattr(torch.optim.lr_scheduler, cfg.training.lr_scheduler)
-    # scheduler = scheduler(optimizer, **cfg.training.lr_scheduler_args)
+    param_optimizer_CNN = list(net.named_parameters())
+    no_decay = ["prelu", "bias", "LayerNorm.bias", "LayerNorm.weight"]
+    optimizer_grouped_parameters_CNN = [
+    	{"params": [p for n, p in param_optimizer_CNN if not any(nd in n for nd in no_decay) and not any(nd in n for nd in emb_par)], "weight_decay": wt_decay},
+    	{"params": [p for n, p in param_optimizer_CNN if any(nd in n for nd in no_decay) and not any(nd in n for nd in emb_par)], "weight_decay": 0.0,},
+    	{"params": [p for n, p in param_optimizer_CNN if any(nd in n for nd in emb_par)], "weight_decay": wt_decay, 'lr': lr},
+    ]
 
-    # no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight",'prelu']
-    # emb_par = ["img_embeddings_encoder.weight", "embedding_fc.weight"]
+    #optimizer_CNN = optim.Adam(model.parameters(),lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=wt_decay, amsgrad=True)
+    optimizer = Adam(optimizer_grouped_parameters_CNN, 
+                     lr=lr, 
+                     betas=betas, 
+                     eps=eps, 
+                     weight_decay=wt_decay, 
+                     amsgrad=amsgrad)
+    # optimizer_CNN = AdamW(optimizer_grouped_parameters_CNN,lr = lr,eps=1e-8)
 
-    # param_optimizer_CNN = list(net.named_parameters())
-    # print(len(param_optimizer_CNN))
-    # #print(param_optimizer)
-    # no_decay = ["prelu", "bias", "LayerNorm.bias", "LayerNorm.weight"]
-    # optimizer_grouped_parameters_CNN = [
-    # 	{"params": [p for n, p in param_optimizer_CNN if not any(nd in n for nd in no_decay) and not any(nd in n for nd in emb_par)], "weight_decay": wt_decay},
-    # 	{"params": [p for n, p in param_optimizer_CNN if any(nd in n for nd in no_decay) and not any(nd in n for nd in emb_par)], "weight_decay": 0.0,},
-    # 	{"params": [p for n, p in param_optimizer_CNN if any(nd in n for nd in emb_par)], "weight_decay": wt_decay, 'lr': lr},
-    # ]
+    scheduler = getattr(torch.optim.lr_scheduler, cfg.training.lr_scheduler)
+    scheduler = scheduler(optimizer, **cfg.training.lr_scheduler_args)
 
-    # #optimizer_CNN = optim.Adam(model.parameters(),lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=wt_decay, amsgrad=True)
-    # optimizer_CNN = optim.Adam(optimizer_grouped_parameters_CNN,lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=wt_decay, amsgrad=True)
-    #optimizer_CNN = AdamW(optimizer_grouped_parameters_CNN,lr = lr,eps=1e-8)
-
-    # Training 
+    # Start Training 
+    logging.info(f"== Start training {cfg.experiment_name} ==")
     epoch = 0
     early_stop = cfg.training.early_stop
     early_stop_cont = 0
-    batch_size = cfg.dataloader.batch_size
 
-    iterations = int(len(train_dataset))+1
+    iterations_train = int(len(train_dataset))+1
+    iterations_valid = int(len(validation_dataset))+1
+
     best_loss = 100000.0
     cont_iterations_tot = 0
     start_time = time.time()
 
     while (epoch<cfg.training.epochs and early_stop_cont<early_stop):
-
-        wandb.log({"epoch": epoch + 1})
+        if cfg.wandb.enable:
+            wandb.log({"epoch": epoch + 1})
+            wandb.define_metric("train/lr", step_metric="epoch")
+            wandb.log({"train/lr": optimizer.param_groups[0]["lr"]})
 
         start_time_epoch = time.time()
-        total_iters = 0
-        train_loss = 0.0
-        
 
-        filenames_wsis = []
-        pred_scc = []
-        pred_nscc_ademo = []
-        pred_nscc_squamoous = []
-        pred_normal = []
-
-        samples_fname = []
-        positive_samples_fname = []
-        negative_samples_fname = []
-        hard_negative_samples_fname = []
-
-        y_pred = []
-        y_true = []
-
-        dataloader_iterator = iter(training_generator_bag)
-
-        net.train()
-
-        # if (flag_dataset=='finetune_pretrain'):
-        #     for param in net.embedding.parameters():
-        #         param.requires_grad = False
-
-        #     for param in net.attention.parameters():
-        #         param.requires_grad = False
-                
-        #     for param in net.embedding_before_fc.parameters():
-        #         param.requires_grad = False		
-
-        for i in range(iterations):
-            logging.info('[%d], %d / %d ' % (epoch + 1, i + 1, iterations))
-            try:
-                wsi_id, labels = next(dataloader_iterator)
-            except StopIteration:
-                dataloader_iterator = iter(training_generator_bag)
-                wsi_id, labels = next(dataloader_iterator)
-                #inputs: bags, labels: labels of the bags
-            
-            wsi_id = wsi_id[0]
-            labels = torch.stack(labels)
-            labels_np = labels.cpu().numpy().flatten()
-
-            labels_local = labels.float().flatten().to(device, non_blocking=True)
-
-            # print("[" + str(i) + "/" + str(len(train_dataset)) + "], " + "inputs_bag: " + str(wsi_id))
-            # print("labels: " + str(labels_np))
-        
-
-            #pipeline_transform = generate_transformer(labels_np[i_wsi])
-            pipeline_transform = generate_transformer(labels_np)
-
-            training_generator_instance = get_generator_instances(patches_train[wsi_id], 
-                                                                  preprocess,
-                                                                  batch_size, 
-                                                                  pipeline_transform,
-                                                                  cfg.dataloader.num_workers) 
-            
-            n_elems = len(patches_train[wsi_id])                                            
-            net.eval()
-
-            features = []
-            with torch.no_grad():
-                for instances in training_generator_instance:
-                    instances = instances.to(device, non_blocking=True)
-
-                    # forward + backward + optimize
-                    feats = net.conv_layers(instances)
-                    feats = feats.view(-1, net.fc_input_features)
-                    feats_np = feats.cpu().data.numpy()
-
-                    features = np.append(features,feats_np)
-
-                    #del instances
-                #del instances
-            features_np = np.reshape(features,(n_elems, net.fc_input_features))
-
-            #torch.cuda.empty_cache()
-            #del features, feats
-
-            net.train()
-            net.zero_grad(set_to_none=True)
-
-            inputs_embedding = torch.tensor(features_np, requires_grad=True).float().to(device, non_blocking=True)
-
-            logits_img, cls_img = net(None, inputs_embedding)
-            
-            #loss img
-            loss_img = criterion(logits_img, labels_local)
-            
-            #loss_classification = (loss_img + loss_neg) / 2
-            loss = loss_img
-
-            sigmoid_output_img = F.sigmoid(logits_img)
-            outputs_wsi_np_img = sigmoid_output_img.cpu().data.numpy()
-            train_loss = train_loss + ((1 / (i+1)) * (loss.item() - train_loss))
-            
-            total_iters = total_iters + 1
-            cont_iterations_tot = cont_iterations_tot + 1
-
-            if (total_iters%200==True):
-                wandb.log({"iterations": cont_iterations_tot})
-                wandb.define_metric("train/loss_iter", step_metric="iterations")
-                wandb.log({"train/loss_iter": train_loss})
-
-            loss.backward() 
-
-            optimizer.step()
-
-            optimizer.zero_grad(set_to_none=True)
-            net.zero_grad(set_to_none=True)
-            #bert_model.zero_grad()
-
-            logging.info("pred_img: " + str(outputs_wsi_np_img))
-            logging.info("train_loss: " + str(train_loss))
-
-            filenames_wsis = np.append(filenames_wsis, wsi_id)
-            pred_scc = np.append(pred_scc, outputs_wsi_np_img[0])
-            pred_nscc_ademo = np.append(pred_nscc_ademo, outputs_wsi_np_img[1])
-            pred_nscc_squamoous = np.append(pred_nscc_squamoous, outputs_wsi_np_img[2])
-            pred_normal = np.append(pred_normal, outputs_wsi_np_img[3])
-
-            output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
-
-            y_pred = np.append(y_pred, output_norm)
-            y_true = np.append(y_true, labels_np)
-            # print(y_pred)
-            # print(y_true)
-            micro_accuracy_train = accuracy_micro(y_true, y_pred)
-            logging.info("micro_accuracy " + str(micro_accuracy_train))    
-
-        # accuracy_train = accuracy_macro(y_true, y_pred)
-        wandb.define_metric("train/loss", step_metric="epoch")
-        wandb.log({"train/loss": train_loss})
-        wandb.define_metric("train/accuracy", step_metric="epoch")
-        wandb.log({"train/accuracy": micro_accuracy_train})
-        logging.info(f"Accuracy train Epoch {epoch + 1}: {micro_accuracy_train}")
-
+        # Training
+        y_true_tr, scores_tr, train_loss, accuracy_train, df_train = train(cfg,
+                                                                           net,
+                                                                           criterion,
+                                                                           optimizer,
+                                                                           scheduler,
+                                                                           training_generator_bag,
+                                                                           patches_train,
+                                                                           preprocess,
+                                                                           iterations_train,
+                                                                           epoch,
+                                                                           cont_iterations_tot,
+                                                                           outputdir)
         #save_training predictions
-        filename_training_predictions = Path(outputdir / f"training_predictions_{epoch}.csv")
-
-        File = {'filenames': filenames_wsis,
-                'pred_scc': pred_scc, 
-                'pred_nscc_ademo': pred_nscc_ademo,
-                'pred_nscc_squamoous': pred_nscc_squamoous, 
-                'pred_normal': pred_normal}
-
-        df_predictions = pd.DataFrame.from_dict(File)
-        df_predictions.to_csv(filename_training_predictions)
-
-        #bert_model.eval()
-
-        samples_fname = []
-        positive_samples_fname = []
-        negative_samples_fname = []
-        hard_negative_samples_fname = []
-
-        logging.info("== Validation ==")
-        valid_loss, accuracy_validation = evaluate_validation_set(net, 
-                                                                  criterion, 
-                                                                  validation_generator_bag,
-                                                                  validation_dataset,
-                                                                  patches_validation,
-                                                                  epoch,
-                                                                  preprocess,
-                                                                  batch_size,
-                                                                  cfg.dataloader.num_workers)
+        filename_training_predictions = Path(outputdir / f"training_predictions_{epoch + 1}.csv")
+        df_train.to_csv(filename_training_predictions)
         
-        # Wandb 
-        wandb.define_metric("validation/loss", step_metric="epoch")
-        wandb.log({"validation/loss": valid_loss})
-        wandb.define_metric("validation/accuracy", step_metric="epoch")
-        wandb.log({"validation/accuracy": accuracy_validation})
+        arange_like_predictions = np.arange(len(y_true_tr))
+        names = ["SCC", "NSCC_Adeno", "NSCC_Squamous", "Normal"]
+
+        # Compute ROC curve and ROC area for each class
+        fpr = dict()
+        tpr = dict()
+        roc_auc = dict()
+        for i in range(4):
+            fpr[i], tpr[i], _ = roc_curve(y_true_tr[arange_like_predictions%4 == 0 + i],
+                                          scores_tr[arange_like_predictions%4 == 0 + i])
+            roc_auc[i] = auc(fpr[i], tpr[i])
+
+        # Compute micro-average ROC curve and ROC area
+        fpr["micro"], tpr["micro"], _ = roc_curve(y_true_tr, scores_tr)
+        roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+
+        # Plot ROC curve
+        custom_params = {"axes.spines.right": False, "axes.spines.top": False}
+        sns.set_theme(style="whitegrid", rc=custom_params)
+        plt.figure()
+        plt.plot(fpr["micro"], tpr["micro"],
+                label='micro-average ROC curve (area = {0:0.2f})'
+                    ''.format(roc_auc["micro"]))
+        for i in range(4):
+            plt.plot(fpr[i], tpr[i], label=f"ROC curve {names[i]} (AUC = {roc_auc[i]:0.2f})")
+
+        plt.plot([0, 1], [0, 1], 'k--')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel("False Positive Rate (Fpr)")
+        plt.ylabel("True Positive Rate (Tpr)")
+        plt.title("Training ROC Lung Cancer Multiclass")
+        plt.legend(loc="lower right")
+        plt.savefig(outputdir / f"training_{epoch + 1}_roc.svg")
+        plt.clf()
+
+        if cfg.wandb.enable:
+            wandb.define_metric("train/loss", step_metric="epoch")
+            wandb.log({"train/loss": train_loss})
+            wandb.define_metric("train/accuracy", step_metric="epoch")
+            wandb.log({"train/accuracy": accuracy_train})
+
+            wandb.define_metric("train/auc_scc", step_metric="epoch")
+            wandb.log({"train/auc_scc": roc_auc[0]})
+            wandb.define_metric("train/auc_nscc_adeno", step_metric="epoch")
+            wandb.log({"train/auc_nscc_adeno": roc_auc[1]})
+            wandb.define_metric("train/auc_nscc_squamous", step_metric="epoch")
+            wandb.log({"train/auc_nscc_squamous": roc_auc[2]})
+            wandb.define_metric("train/auc_normal", step_metric="epoch")
+            wandb.log({"train/auc_normal": roc_auc[3]})
+            wandb.define_metric("train/auc_micro", step_metric="epoch")
+            wandb.log({"train/auc_micro": roc_auc["micro"]})
+
+        logging.info(f"Accuracy train Epoch {epoch + 1}: {accuracy_train}")
+
+        # Validation
+        y_true_vd, scores_vd, valid_loss, accuracy_valid, df_valid = validation(cfg,
+                                                                                net,
+                                                                                criterion,
+                                                                                validation_generator_bag,
+                                                                                patches_validation,
+                                                                                preprocess,
+                                                                                iterations_valid,
+                                                                                epoch)
+        
+        # Save validation predictions
+        filename_validation_predictions = Path(outputdir / f"validation_predictions_{epoch + 1}.csv")
+        df_valid.to_csv(filename_validation_predictions) 
+
+        arange_like_predictions = np.arange(len(y_true_vd))
+
+        # Compute ROC curve and ROC area for each class
+        fpr = dict()
+        tpr = dict()
+        roc_auc = dict()
+        for i in range(4):
+            fpr[i], tpr[i], _ = roc_curve(y_true_vd[arange_like_predictions%4 == 0 + i],
+                                          scores_vd[arange_like_predictions%4 == 0 + i])
+            roc_auc[i] = auc(fpr[i], tpr[i])
+
+        # Compute micro-average ROC curve and ROC area
+        fpr["micro"], tpr["micro"], _ = roc_curve(y_true_vd, scores_vd)
+        roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+
+        # Plot ROC curve
+        sns.set_theme(style="whitegrid", rc=custom_params)
+        plt.figure()
+        plt.plot(fpr["micro"], tpr["micro"],
+                label='micro-average ROC curve (area = {0:0.2f})'
+                    ''.format(roc_auc["micro"]))
+        for i in range(4):
+            plt.plot(fpr[i], tpr[i], label=f"ROC curve {names[i]} (AUC = {roc_auc[i]:0.2f})")
+
+        plt.plot([0, 1], [0, 1], 'k--')
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel("False Positive Rate (Fpr)")
+        plt.ylabel("True Positive Rate (Tpr)")
+        plt.title("Validation ROC Lung Cancer Multiclass")
+        plt.legend(loc="lower right")
+        plt.savefig(outputdir / f"validation_{epoch + 1}_roc.svg")
+        plt.clf()
+        # Wandb
+        if cfg.wandb.enable: 
+            wandb.define_metric("validation/loss", step_metric="epoch")
+            wandb.log({"validation/loss": valid_loss})
+            wandb.define_metric("validation/accuracy", step_metric="epoch")
+            wandb.log({"validation/accuracy": accuracy_valid})
+
+            wandb.define_metric("validation/auc_scc", step_metric="epoch")
+            wandb.log({"validation/auc_scc": roc_auc[0]})
+            wandb.define_metric("validation/auc_nscc_adeno", step_metric="epoch")
+            wandb.log({"validation/auc_nscc_adeno": roc_auc[1]})
+            wandb.define_metric("validation/auc_nscc_squamous", step_metric="epoch")
+            wandb.log({"validation/auc_nscc_squamous": roc_auc[2]})
+            wandb.define_metric("validation/auc_normal", step_metric="epoch")
+            wandb.log({"validation/auc_normal": roc_auc[3]})
+            wandb.define_metric("validation/auc_micro", step_metric="epoch")
+            wandb.log({"validation/auc_micro": roc_auc["micro"]})
 
         # Create directories for the outputs
         outputdir_results = Path(outputdir /
@@ -824,13 +943,11 @@ def main(config_file, exp_name_moco):
         Path(outputdir_results).mkdir(exist_ok=True, parents=True)
 
         model_filename = Path(outputdir_results / f"{cfg.experiment_name}.pt")
-        model_filename_temp = Path(outputdir_results / f"{cfg.experiment_name}_temporary.pt")
-        model_weights_filename_checkpoint = Path(outputdir_results /'checkpoint.pt')
 
-        if (best_loss>valid_loss):
+        if (best_loss > valid_loss):
             early_stop_cont = 0
-            logging.info ("=> Saving a new best model")
-            logging.info("previous loss : " + str(best_loss) + ", new loss function: " + str(valid_loss))
+            logging.info ("== Saving a new best model ==")
+            logging.info(f"Previous loss: {str(best_loss)}, New loss function: {str(valid_loss)}")
             best_loss = valid_loss
             best_epoch = epoch
 
@@ -838,7 +955,7 @@ def main(config_file, exp_name_moco):
                 torch.save({'epoch': best_epoch,
                             'encoder_state_dict': net.state_dict(),
                             'optimizer_state_dict': optimizer.state_dict(),
-                            # 'scheduler_state_dict': scheduler.state_dict(),
+                            'scheduler_state_dict': scheduler.state_dict(),
                             'train_loss': train_loss,
                             'valid_loss': best_loss},
                             model_filename,
@@ -847,36 +964,24 @@ def main(config_file, exp_name_moco):
                 torch.save({'epoch': best_epoch,
                             'encoder_state_dict': net.state_dict(),
                             'optimizer_state_dict': optimizer.state_dict(),
-                            # 'scheduler_state_dict': scheduler.state_dict(),
+                            'scheduler_state_dict': scheduler.state_dict(),
                             'train_loss': train_loss,
                             'valid_loss': best_loss},
                             model_filename)   
-                    
-            filename_training_predictions = Path(outputdir_results / 'training_predictions_best.csv')
+            
+            # Save best predictions
+            best_training_predictions = Path(outputdir_results / 
+                                             "training_predictions_best.csv")
+            df_train.to_csv(best_training_predictions)
 
-            File = {'filenames': filenames_wsis,
-                'pred_scc': pred_scc, 
-                'pred_nscc_ademo': pred_nscc_ademo,
-                'pred_nscc_squamoous': pred_nscc_squamoous, 
-                'pred_normal': pred_normal}
-
-            df_predictions = pd.DataFrame.from_dict(File)
-            df_predictions.to_csv(filename_training_predictions)
+            best_validation_predictions = Path(outputdir_results / 
+                                               "validation_predictions_best.csv")
+            df_valid.to_csv(best_validation_predictions) 
 
         else:
             early_stop_cont = early_stop_cont+1
 
-        #save checkpoint
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': net.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': loss,
-            'train_loss': train_loss,
-            'valid_loss': best_loss},
-            model_weights_filename_checkpoint)
-
-        epoch = epoch+1
+        epoch = epoch + 1
         if (early_stop_cont == early_stop):
             logging.info("======== EARLY STOPPING ========")
 
@@ -888,8 +993,8 @@ def main(config_file, exp_name_moco):
     logging.info(f"Best loss: {best_loss} at {best_epoch + 1}")
 
     torch.cuda.empty_cache()
-
-    wandb.finish()
+    if cfg.wandb.enable:
+        wandb.finish()
 
 
 if __name__ == '__main__':
