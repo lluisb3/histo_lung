@@ -7,8 +7,50 @@ from easydict import EasyDict as edict
 from typing import Optional, List
 import yaml
 import wandb
+from sklearn.metrics import accuracy_score
+from database import Dataset_instance_MIL
+from torch.utils.data import DataLoader
+
 
 thispath = Path(__file__).resolve()
+
+
+def get_generator_instances(csv_patches_path, preprocess, batch_size, pipeline_transform, num_workers):
+
+    params_instance = {'batch_size': batch_size,
+                    'num_workers': num_workers,
+                    'pin_memory': True,
+                    'shuffle': True}
+
+    instances = Dataset_instance_MIL(csv_patches_path, pipeline_transform, preprocess)
+    generator = DataLoader(instances, **params_instance)
+
+    return generator
+
+
+def accuracy_micro(y_true, y_pred):
+
+    y_true_flatten = y_true.flatten()
+    y_pred_flatten = y_pred.flatten()
+    
+    return accuracy_score(y_true_flatten, y_pred_flatten)
+
+    
+def accuracy_macro(y_true, y_pred):
+
+    n_classes = 4
+
+    acc_tot = 0.0
+
+    for i in range(n_classes):
+
+        acc = accuracy_score(y_true[i,:], y_pred[i,:])
+        #print(acc)
+        acc_tot = acc_tot + acc
+
+    acc_tot = acc_tot/n_classes
+
+    return acc_tot
 
 
 def cosine_similarity(a, b):

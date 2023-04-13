@@ -51,13 +51,26 @@ def train(encoder, momentum_encoder, optimizer, scheduler, transform, preprocess
     num_workers = cfg.dataloader.num_workers
     shuffle_bn = True
 
+    if cfg['training']['resume_training']:
+        checkpoint = torch.load(chkpt_path)
+        encoder.load_state_dict(checkpoint['encoder_state_dict'])
+        momentum_encoder.load_state_dict(checkpoint['m_encoder_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        epoch = checkpoint['epoch']
+        best_loss = 
+        loss = 
+    else:
+        epoch = 0 
+        best_loss = 100000.0
+
     iterations_per_epoch = (number_patches / batch_size) + 1
-    epoch = 0 
+    
     # number of epochs without improvement
     early_stop = cfg.training.early_stop
     early_stop_cont = 0
 
-    best_loss = 100000.0
+    
 
     # tot_iterations = cfg.training.epochs * iterations_per_epoch
     cont_iterations_tot = 0
@@ -239,14 +252,16 @@ def train(encoder, momentum_encoder, optimizer, scheduler, transform, preprocess
                     try:
                         torch.save({'epoch': epoch,
                                     'encoder_state_dict': encoder.state_dict(),
+                                    'm_encoder_state_dict': momentum_encoder.state_dict(),
                                     'optimizer_state_dict': optimizer.state_dict(),
                                     'scheduler_state_dict': scheduler.state_dict(),
-                                    'loss': train_loss_moco},
+                                    'loss': best_loss},
                                     model_filename,
                                     _use_new_zipfile_serialization=False)
                     except:
                         torch.save({'epoch': epoch,
                                     'encoder_state_dict': encoder.state_dict(),
+                                    'm_encoder_state_dict': momentum_encoder.state_dict(),
                                     'optimizer_state_dict': optimizer.state_dict(),
                                     'scheduler_state_dict': scheduler.state_dict(),
                                     'loss': best_loss},
@@ -256,6 +271,7 @@ def train(encoder, momentum_encoder, optimizer, scheduler, transform, preprocess
                     try:
                         torch.save({'epoch': epoch,
                                     'encoder_state_dict': encoder.state_dict(),
+                                    'm_encoder_state_dict': momentum_encoder.state_dict(),
                                     'optimizer_state_dict': optimizer.state_dict(),
                                     'scheduler_state_dict': scheduler.state_dict(),
                                     'loss': train_loss_moco}, 
@@ -264,6 +280,7 @@ def train(encoder, momentum_encoder, optimizer, scheduler, transform, preprocess
                     except:
                         torch.save({'epoch': epoch,
                                     'encoder_state_dict': encoder.state_dict(),
+                                    'm_encoder_state_dict': momentum_encoder.state_dict(),
                                     'optimizer_state_dict': optimizer.state_dict(),
                                     'scheduler_state_dict': scheduler.state_dict(),
                                     'loss': train_loss_moco}, 

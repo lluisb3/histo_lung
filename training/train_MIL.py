@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.utils.data
 from torch.optim import Adam
 from torchvision import transforms
-from sklearn.metrics import accuracy_score, roc_curve, auc, roc_auc_score
+from sklearn.metrics import roc_curve, auc, accuracy_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
@@ -22,10 +22,11 @@ from transformers import LongformerConfig, LongformerModel, LongformerSelfAttent
 from transformers import RobertaTokenizer, RobertaForMaskedLM, RobertaForSequenceClassification, AutoTokenizer
 
 from ast import literal_eval
-from database import Dataset_instance_MIL, Dataset_bag_MIL
+from database import Dataset_bag_MIL
 from training.mil import MIL_model
 from training.models import ModelOption
-from training.utils_trainig import yaml_load, initialize_wandb, edict2dict
+from training.utils_trainig import yaml_load, initialize_wandb, edict2dict, get_generator_instances
+from training.utils_trainig import accuracy_micro, accuracy_macro
 import yaml
 from utils import timer
 import wandb
@@ -153,44 +154,6 @@ def generate_transformer(label, prob = 0.5):
     return pipeline_transform
 
 
-def get_generator_instances(csv_patches_path, preprocess, batch_size, pipeline_transform, num_workers):
-
-    params_instance = {'batch_size': batch_size,
-                    'num_workers': num_workers,
-                    'pin_memory': True,
-                    'shuffle': True}
-
-    instances = Dataset_instance_MIL(csv_patches_path, pipeline_transform, preprocess)
-    generator = DataLoader(instances, **params_instance)
-
-    return generator
-
-
-def accuracy_micro(y_true, y_pred):
-
-    y_true_flatten = y_true.flatten()
-    y_pred_flatten = y_pred.flatten()
-    
-    return accuracy_score(y_true_flatten, y_pred_flatten)
-
-    
-def accuracy_macro(y_true, y_pred):
-
-    n_classes = 4
-
-    acc_tot = 0.0
-
-    for i in range(n_classes):
-
-        acc = accuracy_score(y_true[i,:], y_pred[i,:])
-        #print(acc)
-        acc_tot = acc_tot + acc
-
-    acc_tot = acc_tot/n_classes
-
-    return acc_tot
-
-
 def validation(cfg,
                net,
                criterion,
@@ -220,7 +183,7 @@ def validation(cfg,
     dataloader_iterator = iter(generator)
     with torch.no_grad():
         for i in range(iterations):
-            logging.info('[%d], %d / %d ' % (epoch + 1, i + 1, iterations))
+            logging.info(f"[{epoch + 1}], {i + 1} / {iterations}")
             try:
                 wsi_id, labels = next(dataloader_iterator)
             except StopIteration:
@@ -283,8 +246,8 @@ def validation(cfg,
             y_true = np.append(y_true, labels_np)
             scores_pred= np.append(scores_pred, outputs_wsi_np_img)
             
-            micro_accuracy_train = accuracy_micro(y_true, y_pred)
-            logging.info(f"micro_accuracy valid {micro_accuracy_train}") 
+            accuracy_valid = accuracy_score(y_true, y_pred)
+            logging.info(f"micro_accuracy valid {accuracy_valid}") 
 
         File = {'filenames': filenames_wsis,
         'pred_scc': pred_scc, 
@@ -294,7 +257,7 @@ def validation(cfg,
 
         df_predictions = pd.DataFrame.from_dict(File)   
     
-    return y_true, scores_pred, validation_loss, micro_accuracy_train, df_predictions
+    return y_true, scores_pred, validation_loss, accuracy_valid, df_predictions
 
 def train(cfg, 
           net, 
@@ -339,7 +302,7 @@ def train(cfg,
     #         param.requires_grad = False		
 
     for i in range(iterations):
-        logging.info('[%d], %d / %d ' % (epoch + 1, i + 1, iterations))
+        logging.info(f"[{epoch + 1}], {i + 1} / {iterations}")
         try:
             wsi_id, labels = next(dataloader_iterator)
         except StopIteration:
@@ -439,7 +402,7 @@ def train(cfg,
 
         # print(y_pred)
         # print(y_true)
-        micro_accuracy_train = accuracy_micro(y_true, y_pred)
+        micro_accuracy_train = accuracy_score(y_true, y_pred)
         logging.info(f"micro_accuracy train: {micro_accuracy_train}")
 
     scheduler.step()
@@ -580,7 +543,7 @@ def main(config_file, exp_name_moco):
     #         q = q.squeeze().cpu().numpy()
     #         feature_patches_dict[patches_path.stem[i]] = q
 
-    # Loading Data Spit
+    # Loading Data Split
     k = 10
 
     data_split = pd.read_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split.csv"), index_col=0)
@@ -744,7 +707,15 @@ def main(config_file, exp_name_moco):
     ])
 
     # Loss function
-    criterion = getattr(torch.nn, cfg.training.criterion)()
+    if cfg.training.criterion_args.get('weights') is not None:
+        weights = torch.tensor(cfg.training.criterion_args.weights,
+                               dtype=torch.float,
+                               device=device)
+        print(weights)
+        criterion = getattr(torch.nn, cfg.training.criterion)(weight=weights)
+    else:
+        criterion = getattr(torch.nn, cfg.training.criterion)()
+    
 
     # Optimizer
     param_optimizer_cfg = cfg.training.optimizer_args
@@ -784,8 +755,8 @@ def main(config_file, exp_name_moco):
     early_stop = cfg.training.early_stop
     early_stop_cont = 0
 
-    iterations_train = int(len(train_dataset))+1
-    iterations_valid = int(len(validation_dataset))+1
+    iterations_train = int(len(train_dataset))
+    iterations_valid = int(len(validation_dataset))
 
     best_loss = 100000.0
     cont_iterations_tot = 0
@@ -953,7 +924,7 @@ def main(config_file, exp_name_moco):
 
             try:
                 torch.save({'epoch': best_epoch,
-                            'encoder_state_dict': net.state_dict(),
+                            'model_state_dict': net.state_dict(),
                             'optimizer_state_dict': optimizer.state_dict(),
                             'scheduler_state_dict': scheduler.state_dict(),
                             'train_loss': train_loss,
@@ -962,7 +933,7 @@ def main(config_file, exp_name_moco):
                             _use_new_zipfile_serialization=False)
             except:
                 torch.save({'epoch': best_epoch,
-                            'encoder_state_dict': net.state_dict(),
+                            'model_state_dict': net.state_dict(),
                             'optimizer_state_dict': optimizer.state_dict(),
                             'scheduler_state_dict': scheduler.state_dict(),
                             'train_loss': train_loss,
