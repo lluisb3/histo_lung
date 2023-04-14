@@ -1,4 +1,4 @@
-experiment_name: MIL_0001_weights
+experiment_name: MIL_0001_focalLoss
 model:
     model_name: "resnet34"
     num_classes: 4

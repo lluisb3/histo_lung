@@ -44,6 +44,17 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # torch.backends.cudnn.benchmark = True
 
 
+def focal_binary_cross_entropy(logits, targets, num_label, gamma=2):
+    l = logits.reshape(-1)
+    t = targets.reshape(-1)
+    p = torch.sigmoid(l)
+    p = torch.where(t >= 0.5, p, 1-p)
+    logp = - torch.log(torch.clamp(p, 1e-4, 1-1e-4))
+    loss = logp*((1-p)**gamma)
+    loss = num_label*loss.mean()
+    return loss
+
+
 def select_parameters_colour():
     hue_min = -15
     hue_max = 8
@@ -225,7 +236,7 @@ def validation(cfg,
         
             logits_img, _ = net(None, inputs)
             #loss img
-            loss_img = criterion(logits_img, labels_local)
+            loss_img = focal_binary_cross_entropy(logits_img, labels_local, cfg.model.num_classes)
 
             sigmoid_output_img = F.sigmoid(logits_img)
             outputs_wsi_np_img = sigmoid_output_img.cpu().data.numpy()
@@ -359,7 +370,7 @@ def train(cfg,
         logits_img, cls_img = net(None, inputs_embedding)
         
         #loss img
-        loss_img = criterion(logits_img, labels_local)
+        loss_img = focal_binary_cross_entropy(logits_img, labels_local, cfg.model.num_classes)
         
         #loss_classification = (loss_img + loss_neg) / 2
         loss = loss_img
@@ -580,18 +591,18 @@ def main(config_file, exp_name_moco):
     dataset_name = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_metadata.csv")])
 
     patches_path = {}
-    patches_names = {}
+    # patches_names = {}
     for wsi_patches_path, wsi_patches_names in tqdm(zip(dataset_path, dataset_name),
                                                     desc="Selecting patches: "):
 
         csv_patch_path = pd.read_csv(wsi_patches_path).to_numpy()
         csv_patch_names = pd.read_csv(wsi_patches_names, index_col=0)
 
-        names = csv_patch_names.index.to_numpy()
+        filenames = csv_patch_names.index.to_numpy()
         
         name = wsi_patches_path.parent.stem
         patches_path[name] = csv_patch_path
-        # patches_names[name] = [names]
+        # patches_names[name] = [filenames]
 
         # patches_names[name] = []
         # for instance in csv_patch_path:
@@ -788,7 +799,7 @@ def main(config_file, exp_name_moco):
         df_train.to_csv(filename_training_predictions)
         
         arange_like_predictions = np.arange(len(y_true_tr))
-        names = ["SCC", "NSCC_Adeno", "NSCC_Squamous", "Normal"]
+        names = ["SCC", "NSCC Adeno", "NSCC Squamous", "No Cancer"]
 
         # Compute ROC curve and ROC area for each class
         fpr = dict()
@@ -821,7 +832,7 @@ def main(config_file, exp_name_moco):
         plt.title("Training ROC Lung Cancer Multiclass")
         plt.legend(loc="lower right")
         plt.savefig(outputdir / f"training_{epoch + 1}_roc.svg")
-        plt.clf()
+        plt.close()
 
         if cfg.wandb.enable:
             wandb.define_metric("train/loss", step_metric="epoch")
@@ -888,7 +899,7 @@ def main(config_file, exp_name_moco):
         plt.title("Validation ROC Lung Cancer Multiclass")
         plt.legend(loc="lower right")
         plt.savefig(outputdir / f"validation_{epoch + 1}_roc.svg")
-        plt.clf()
+        plt.close()
         # Wandb
         if cfg.wandb.enable: 
             wandb.define_metric("validation/loss", step_metric="epoch")

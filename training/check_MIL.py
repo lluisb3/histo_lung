@@ -13,9 +13,12 @@ from training.models import ModelOption
 from training.utils_trainig import yaml_load, get_generator_instances
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, cohen_kappa_score
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
+from sklearn.metrics import multilabel_confusion_matrix, ConfusionMatrixDisplay
 from natsort import natsorted
 import matplotlib.pyplot as plt
 import seaborn as sns
+import logging
+import click
 
 thispath = Path(__file__).resolve()
 
@@ -24,611 +27,1125 @@ datadir = Path(thispath.parent.parent / "data")
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
-# Load PyTorch model
-experiment_name = "MIL_resnet101_0001_256"
+@click.command()
+@click.option(
+    "--experiment_name",
+    default="MIL_resnet101_00025_2102030",
+    prompt="Name of the MIL experiment name to compute metrics",
+    help="Name of the MIL experiment name to compute metrics",
+)
+@click.option(
+    "--dataset",
+    default="test",
+    prompt="Name of the dataset 'test', 'valid' or 'train'",
+    help="Name of the dataset 'test', 'valid' or 'train'",
+)
+def main(experiment_name, dataset):
 
-dataset = "test"
+      modeldir = Path(thispath.parent.parent / "trained_models" / "MIL" / experiment_name)
 
-modeldir = Path(thispath.parent.parent / "trained_models" / "MIL" / experiment_name)
+      cfg = yaml_load(modeldir / f"config_{experiment_name}.yml")
 
-cfg = yaml_load(modeldir / f"config_{experiment_name}.yml")
+      bestdir = Path(modeldir / cfg.dataset.magnification / cfg.model.model_name)
 
-bestdir = Path(modeldir / cfg.dataset.magnification / cfg.model.model_name)
+      # For logging
+      logging.basicConfig(format='%(asctime)s %(levelname)s:%(message)s',
+                        encoding='utf-8',
+                        level=logging.INFO,
+                        handlers=[
+                              logging.FileHandler(bestdir / "debug_metrics.log"),
+                              logging.StreamHandler()
+                        ],
+                        datefmt='%m/%d/%Y %I:%M:%S %p')
 
-checkpoint = torch.load(bestdir / f"{experiment_name}.pt")
+      checkpoint = torch.load(bestdir / f"{experiment_name}.pt")
 
-train_loss = checkpoint["train_loss"]
-valid_loss = checkpoint["valid_loss"]
-epoch = checkpoint["epoch"] + 1
+      train_loss = checkpoint["train_loss"]
+      valid_loss = checkpoint["valid_loss"]
+      epoch = checkpoint["epoch"] + 1
 
-print(f"Loaded encoder using as backbone {cfg.model.model_name} with a best loss in train "
-      f"of {train_loss} and in validation of {valid_loss} at Epoch {epoch}")
+      logging.info(f"Loaded {experiment_name} using as backbone {cfg.model.model_name}, a Best "
+                   f"Loss in Train of {train_loss} and in Validation of {valid_loss} at Epoch "
+                   f"{epoch+1}.")
+      logging.info("")
 
-labels = pd.read_csv(datadir / "labels.csv", index_col=0)
+      model = ModelOption(cfg.model.model_name,
+                  cfg.model.num_classes,
+                  freeze=cfg.model.freeze_weights,
+                  num_freezed_layers=cfg.model.num_frozen_layers,
+                  dropout=cfg.model.dropout,
+                  embedding_bool=cfg.model.embedding_bool,
+                  pool_algorithm=cfg.model.pool_algorithm
+                  )
 
-train_predictions = pd.read_csv(bestdir / "training_predictions_best.csv", index_col=0)
-valid_predictions = pd.read_csv(bestdir / "validation_predictions_best.csv", index_col=0)
+      hidden_space_len = cfg.model.hidden_space_len
 
+      net = MIL_model(model, hidden_space_len)
 
-model = ModelOption(cfg.model.model_name,
-                cfg.model.num_classes,
-                freeze=cfg.model.freeze_weights,
-                num_freezed_layers=cfg.model.num_frozen_layers,
-                dropout=cfg.model.dropout,
-                embedding_bool=cfg.model.embedding_bool,
-                pool_algorithm=cfg.model.pool_algorithm
-                )
+      net.load_state_dict(checkpoint["encoder_state_dict"], strict=False)
+      net.to(device)
+      net.eval()
 
-hidden_space_len = cfg.model.hidden_space_len
+      # Loading Data Split
+      k = 10
 
-net = MIL_model(model, hidden_space_len)
+      data_split = pd.read_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split.csv"),
+                               index_col=0)
+      train_dataset_k = []
+      validation_dataset_k = []
+      train_labels_k = []
+      validation_labels_k = []
 
-net.load_state_dict(checkpoint["encoder_state_dict"], strict=False)
-net.to(device)
-net.eval()
+      for fold, _ in data_split.iterrows():
+            train_wsi = literal_eval(data_split.loc[fold]["images_train"])
+            validation_wsi = literal_eval(data_split.loc[fold]["images_test"])
+            labels_train = literal_eval(data_split.loc[fold]["labels_train"])
+            labels_validation = literal_eval(data_split.loc[fold]["labels_test"])
+            train_dataset_k.append(train_wsi)
+            validation_dataset_k.append(validation_wsi)
+            train_labels_k.append(labels_train)
+            validation_labels_k.append(labels_validation)
 
-# Loading Data Split
-k = 10
+      # Load fold 0
+      train_dataset = train_dataset_k[0]
+      validation_dataset = validation_dataset_k[0]
+      train_labels = train_labels_k[0]
+      validation_labels = validation_labels_k[0]
 
-data_split = pd.read_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split.csv"), index_col=0)
-train_dataset_k = []
-validation_dataset_k = []
-train_labels_k = []
-validation_labels_k = []
+      # Load Test labels
+      test_csv = pd.read_csv(Path(datadir / f"labels_test.csv"), index_col=0)
+      test_dataset = test_csv.index
+      test_dataset = [i.replace("/", "-") for i in test_dataset]
+      test_labels = test_csv.values
 
-for fold, _ in data_split.iterrows():
-      train_wsi = literal_eval(data_split.loc[fold]["images_train"])
-      validation_wsi = literal_eval(data_split.loc[fold]["images_test"])
-      labels_train = literal_eval(data_split.loc[fold]["labels_train"])
-      labels_validation = literal_eval(data_split.loc[fold]["labels_test"])
-      train_dataset_k.append(train_wsi)
-      validation_dataset_k.append(validation_wsi)
-      train_labels_k.append(labels_train)
-      validation_labels_k.append(labels_validation)
+      # Train and validation metrics from saved predictions
+      labels = pd.read_csv(datadir / "labels.csv", index_col=0)
+      train_predictions_df = pd.read_csv(bestdir / "training_predictions_best.csv", index_col="filenames")
+      train_predictions_df.sort_index(inplace=True)
+      train_predictions_df.drop(columns=train_predictions_df.columns[0], axis=1, inplace=True)
+      train_predictions_df = train_predictions_df[~train_predictions_df.index.duplicated(keep='first')]
+      train_pred_scores = train_predictions_df.values
+      train_pred = np.where(train_pred_scores > 0.5, 1, 0)
 
-# Load fold 0
-train_dataset = train_dataset_k[0]
-validation_dataset = validation_dataset_k[0]
-train_labels = train_labels_k[0]
-validation_labels = validation_labels_k[0]
+      valid_predictions_df = pd.read_csv(bestdir / "validation_predictions_best.csv", index_col="filenames")
+      valid_predictions_df.sort_index(inplace=True)
+      valid_predictions_df.drop(columns=valid_predictions_df.columns[0], axis=1, inplace=True)
+      valid_predictions_df = valid_predictions_df[~valid_predictions_df.index.duplicated(keep='first')]
+      valid_pred_scores = valid_predictions_df.values
+      valid_pred = np.where(valid_pred_scores > 0.5, 1, 0)
 
+      wsi_train = labels.index.intersection(train_predictions_df.index)
+      labels_train = labels.loc[wsi_train].values
+      wsi_valid = labels.index.intersection(valid_predictions_df.index)
+      labels_valid = labels.loc[wsi_valid].values
 
-# Load Test labels
-test_csv = pd.read_csv(Path(datadir / f"labels_test.csv"), index_col=0)
-test_dataset = test_csv.index
-test_dataset = [i.replace("/", "-") for i in test_dataset]
-test_labels = test_csv.values
+      labels_train_flat = labels_train.flatten()
+      train_pred_flat = train_pred.flatten()
+      train_scores_flat = train_pred_scores.flatten()
+      labels_valid_flat = labels_valid.flatten()
+      valid_pred_flat = valid_pred.flatten()
+      valid_scores_flat = valid_pred_scores.flatten()
 
-# Load Test patches
-pyhistdir = Path(datadir / "Mask_PyHIST_v2")
+      arange_like_train = np.arange(len(labels_train_flat))
+      arange_like_valid = np.arange(len(labels_valid_flat))
 
-dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
-dataset_name = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_metadata.csv")])
+      logging.info("== Final Metrics Train ==")
+      names = ["SCC", "NSCC Adeno", "NSCC Squamous", "No Cancer"]
+      for i in range(4):
+            accuracy_train = accuracy_score(labels_train_flat[arange_like_train%4 == 0 + i],
+                                            train_pred_flat[arange_like_train%4 == 0 + i])
+            bma_train = balanced_accuracy_score(labels_train_flat[arange_like_train%4 == 0 + i],
+                                                train_pred_flat[arange_like_train%4 == 0 + i])
+            kappa_train = cohen_kappa_score(labels_train_flat[arange_like_train%4 == 0 + i],
+                                            train_pred_flat[arange_like_train%4 == 0 + i])
 
-patches_path = {}
-patches_names = {}
-for wsi_patches_path, wsi_patches_names in tqdm(zip(dataset_path, dataset_name),
-                                                desc="Selecting patches: "):
+            
+            logging.info(f"Accuracy {names[i]} = {accuracy_train:0.2f}")
+            logging.info(f"BMA {names[i]} = {bma_train:0.2f}")
+            logging.info(f"Kappa {names[i]} = {kappa_train:0.2f}")
+            logging.info("")
 
-      csv_patch_path = pd.read_csv(wsi_patches_path).to_numpy()
-      csv_patch_names = pd.read_csv(wsi_patches_names, index_col=0)
+      logging.info("== Final Metrics Validation ==")
+      for i in range(4):
+            accuracy_valid = accuracy_score(labels_valid_flat[arange_like_valid%4 == 0 + i],
+                                            valid_pred_flat[arange_like_valid%4 == 0 + i])
+            bma_valid = balanced_accuracy_score(labels_valid_flat[arange_like_valid%4 == 0 + i],
+                                                valid_pred_flat[arange_like_valid%4 == 0 + i])
+            kappa_valid = cohen_kappa_score(labels_valid_flat[arange_like_valid%4 == 0 + i],
+                                            valid_pred_flat[arange_like_valid%4 == 0 + i])
 
-      names = csv_patch_names.index.to_numpy()
+            
+            logging.info(f"Accuracy {names[i]} = {accuracy_valid:0.2f}")
+            logging.info(f"BMA {names[i]} = {bma_valid:0.2f}")
+            logging.info(f"Kappa {names[i]} = {kappa_valid:0.2f}")
+            logging.info("")
       
-      name = wsi_patches_path.parent.stem
-      patches_path[name] = csv_patch_path
-      # patches_names[name] = [names]
+      outputdir_train = Path(bestdir / "train_metrics")
+      Path(outputdir_train).mkdir(exist_ok=True, parents=True)
+      outputdir_valid = Path(bestdir / "valid_metrics")
+      Path(outputdir_valid).mkdir(exist_ok=True, parents=True)
 
-      # patches_names[name] = []
-      # for instance in csv_patch_path:
-      #         patches_names[name].append(str(instance).split("/")[-1])
+      confusion_matrix_train = multilabel_confusion_matrix(labels_train, train_pred)
 
-print(f"Total number of patches for train/validation/test {len(patches_path)}")
+      plt.figure()
+      disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix_train[0, :, :],
+                                    display_labels=[False, True])
+      disp.plot()
+      plt.title(f"Confusion Matrix ({names[0]})")
+      plt.savefig(outputdir_train / f"train_{epoch + 1}_cm_{names[0]}.svg")
+      plt.close()
 
-patches_train = {}
-patches_validation = {}
-patches_test = {}
-for value, key in zip(patches_path.values(), patches_path.keys()):
-      if key in train_dataset:
-            patches_train[key] = value
-      if key in validation_dataset:
-            patches_validation[key] = value
-      if key in test_dataset:
-            patches_test[key] = value
+      plt.figure()
+      disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix_train[1, :, :],
+                                    display_labels=[False, True])
+      disp.plot()
+      plt.title(f"Confusion Matrix ({names[1]})")
+      plt.savefig(outputdir_train / f"train_{epoch + 1}_cm_{names[1]}.svg")
+      plt.close()
 
-# print(f"Total number of wsi for train {len(patches_train.values())}")
-# print(f"Total number of wsi for validation {len(patches_validation.values())}")
-print(f"Total number of patches for test {len(patches_test)}")
+      plt.figure()
+      disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix_train[2, :, :],
+                                    display_labels=[False, True])
+      disp.plot()
+      plt.title(f"Confusion Matrix ({names[2]})")
+      plt.savefig(outputdir_train / f"train_{epoch + 1}_cm_{names[2]}.svg")
+      plt.close()
 
-# Load datasets
-batch_size_bag = cfg.dataloader.batch_size_bag
+      plt.figure()
+      disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix_train[3, :, :],
+                                    display_labels=[False, True])
+      disp.plot()
+      plt.title(f"Confusion Matrix ({names[3]})")
+      plt.savefig(outputdir_train / f"train_{epoch + 1}_cm_{names[3]}.svg")
+      plt.close()
 
-params_train_bag = {'batch_size': batch_size_bag,
-                  'shuffle': False}
+      # Compute ROC curve (AUC) and PR curve (AP)
+      fpr_train = {}
+      tpr_train = {}
+      roc_auc_train = {}
+      precision_train = {}
+      recall_train = {}
+      avg_precision_train = {}
+      for i in range(4):
+            fpr_train[i], tpr_train[i], _ = roc_curve(
+                                          labels_train_flat[arange_like_train%4 == 0 + i],
+                                          train_scores_flat[arange_like_train%4 == 0 + i])
+            roc_auc_train[i] = auc(fpr_train[i], tpr_train[i])
 
-train_set_bag = Dataset_bag_MIL(train_dataset, train_labels)
-train_generator_bag = DataLoader(train_set_bag, **params_train_bag)
-
-params_valid_bag = {'batch_size': batch_size_bag,
-                  'shuffle': False}
-
-valid_set_bag = Dataset_bag_MIL(validation_dataset, validation_labels)
-valid_generator_bag = DataLoader(valid_set_bag, **params_valid_bag)
-
-params_test_bag = {'batch_size': batch_size_bag,
-                  'shuffle': False}
-
-test_set_bag = Dataset_bag_MIL(test_dataset, test_labels)
-test_generator_bag = DataLoader(test_set_bag, **params_test_bag)
-
-# Data normalization
-preprocess = transforms.Compose([
-      transforms.ToTensor(),
-      transforms.Normalize(mean=cfg.dataset.mean, std=cfg.dataset.stddev),
-      transforms.Resize(size=(model.resize_param, model.resize_param),
-      antialias=True)
-])
-
-if dataset == "test":
-      # Test
-      outputdir = Path(bestdir / "test")
-      Path(outputdir).mkdir(exist_ok=True, parents=True)
-
-      filenames_wsis = []
-      pred_scc = []
-      pred_nscc_adeno = []
-      pred_nscc_squamous = []
-      pred_normal = []
-
-      y_pred = []
-      y_true = []
-      scores_pred = []
-
-      iterations_test= int(len(test_dataset))
-      dataloader_iterator = iter(test_generator_bag)
-      with torch.no_grad():
-            for i in range(iterations_test):
-                  print(f"Iterations: {i + 1} / {iterations_test}")
-                  try:
-                        wsi_id, labels = next(dataloader_iterator)
-                  except StopIteration:
-                        dataloader_iterator = iter(test_generator_bag)
-                        wsi_id, labels = next(dataloader_iterator)
-                        #inputs: bags, labels: labels of the bags
-
-                  wsi_id = wsi_id[0]
-                  
-                  labels_np = labels.cpu().numpy().flatten()
-
-                  labels_local = labels.float().flatten().to(device, non_blocking=True)
-
-                  test_generator_instance = get_generator_instances(patches_test[wsi_id], 
-                                                                  preprocess,
-                                                                  cfg.dataloader.batch_size, 
-                                                                  None,
-                                                                  cfg.dataloader.num_workers) 
-
-                  n_elems = len(patches_test[wsi_id])   
-
-                  features = []
-                  
-                  for instances in test_generator_instance:
-                        instances = instances.to(device, non_blocking=True)
-
-                        # forward + backward + optimize
-                        feats = net.conv_layers(instances)
-                        feats = feats.view(-1, net.fc_input_features)
-                        feats_np = feats.cpu().data.numpy()
-
-                        features.extend(feats_np)
-
-                              #del instances
-                        #del instances
-                  features_np = np.reshape(features,(n_elems, net.fc_input_features))
-
-                  inputs = torch.tensor(features_np).float().to(device, non_blocking=True)
-                  
-                  logits_img, _ = net(None, inputs)
+            precision_train[i], recall_train[i], _ = precision_recall_curve(
+                                                labels_train_flat[arange_like_train%4 == 0 + i],
+                                                train_scores_flat[arange_like_train%4 == 0 + i])
+            avg_precision_train[i] = average_precision_score(
+                                                labels_train_flat[arange_like_train%4 == 0 + i],
+                                                train_scores_flat[arange_like_train%4 == 0 + i])
 
 
-                  sigmoid_output_img = F.sigmoid(logits_img)
-                  outputs_wsi_np_img = sigmoid_output_img.cpu().numpy()
+      # Compute micro-average ROC curve and ROC area
+      fpr_train["micro"], tpr_train["micro"], _ = roc_curve(labels_train_flat, train_scores_flat)
+      roc_auc_train["micro"] = auc(fpr_train["micro"], tpr_train["micro"])
+      
+      precision_train["micro"], recall_train["micro"], _ = precision_recall_curve(labels_train_flat,
+                                                                      train_scores_flat)
+      avg_precision_train["micro"] = average_precision_score(labels_train,
+                                                             train_pred_scores,
+                                                             average="micro")
 
-                  print(f"pred_img: {outputs_wsi_np_img}")
+      # Plot ROC curve
+      custom_params = {"axes.spines.right": False, "axes.spines.top": False}
+      sns.set_theme(style="whitegrid", rc=custom_params)
+      plt.figure()
+      plt.plot(fpr_train["micro"], tpr_train["micro"],
+            label='micro-average ROC curve (AUC = {0:0.2f})'
+                  ''.format(roc_auc_train["micro"]))
+      for i in range(4):
+            plt.plot(fpr_train[i],
+                  tpr_train[i],
+                  label=f"ROC curve {names[i]} (AUC = {roc_auc_train[i]:0.2f})")
 
-                  filenames_wsis.append(wsi_id)
-                  pred_scc.append(outputs_wsi_np_img[0])
-                  pred_nscc_adeno.append(outputs_wsi_np_img[1])
-                  pred_nscc_squamous.append(outputs_wsi_np_img[2])
-                  pred_normal.append(outputs_wsi_np_img[3])
+      plt.plot([0, 1], [0, 1], 'k--')
+      plt.xlim([0.0, 1.0])
+      plt.ylim([0.0, 1.05])
+      plt.xlabel("False Positive Rate (Fpr)")
+      plt.ylabel("True Positive Rate (Tpr)")
+      plt.title("Train ROC Lung Cancer Multiclass")
+      plt.legend(loc="lower right")
+      plt.savefig(outputdir_train / f"train_{epoch + 1}_roc.svg")
+      plt.close()
 
-                  output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
+      # Plot PR curve
+      sns.set_theme(style="white", rc=custom_params)
+      plt.figure()
+      f_scores = np.linspace(0.2, 0.8, num=4)
+      for f_score in f_scores:
+            x = np.linspace(0.01, 1)
+            y = f_score * x / (2 * x - f_score)
+            (l,) = plt.plot(x[y >= 0], y[y >= 0], color="gray", alpha=0.2)
+            plt.annotate("f1={0:0.1f}".format(f_score), xy=(0.9, y[45] + 0.02))
 
-                  y_pred = np.append(y_pred, output_norm)
-                  y_true = np.append(y_true, labels_np)
-                  scores_pred= np.append(scores_pred, outputs_wsi_np_img)
-                  
-                  micro_accuracy_test = accuracy_score(y_true, y_pred)
-                  print(f"micro_accuracy test {micro_accuracy_test}") 
+      plt.plot(recall_train["micro"], precision_train["micro"],
+            label='micro-average PR curve (AP = {0:0.2f})'
+                  ''.format(avg_precision_train["micro"]))
+      for i in range(4):
+            plt.plot(recall_train[i],
+                  precision_train[i],
+                  label=f"PR curve {names[i]} (AP = {avg_precision_train[i]:0.2f})")
 
-            File = {'filenames': filenames_wsis,
-            'pred_scc': pred_scc, 
-            'pred_nscc_adeno': pred_nscc_adeno,
-            'pred_nscc_squamous': pred_nscc_squamous, 
-            'pred_normal': pred_normal}
+      plt.plot([0, 1], [0, 1], 'k--')
+      plt.xlim([0.0, 1.0])
+      plt.ylim([0.0, 1.05])
+      plt.xlabel("Recall")
+      plt.ylabel("Precision")
+      plt.title("Train PR curve Lung Cancer Multiclass")
+      plt.legend(loc="lower left")
+      plt.savefig(outputdir_train / f"train_{epoch + 1}_pr_curve.svg")
+      plt.close()
 
-            df_predictions = pd.DataFrame.from_dict(File)
+      confusion_matrix_valid = multilabel_confusion_matrix(labels_valid, valid_pred)
+
+      plt.figure()
+      disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix_valid[0, :, :],
+                                    display_labels=[False, True])
+      disp.plot()
+      plt.title(f"Confusion Matrix ({names[0]})")
+      plt.savefig(outputdir_valid / f"valid_{epoch + 1}_cm_{names[0]}.svg")
+      plt.close()
+
+      plt.figure()
+      disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix_valid[1, :, :],
+                                    display_labels=[False, True])
+      disp.plot()
+      plt.title(f"Confusion Matrix ({names[1]})")
+      plt.savefig(outputdir_valid / f"valid_{epoch + 1}_cm_{names[1]}.svg")
+      plt.close()
+
+      plt.figure()
+      disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix_valid[2, :, :],
+                                    display_labels=[False, True])
+      disp.plot()
+      plt.title(f"Confusion Matrix ({names[2]})")
+      plt.savefig(outputdir_valid / f"valid_{epoch + 1}_cm_{names[2]}.svg")
+      plt.close()
+
+      plt.figure()
+      disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix_valid[3, :, :],
+                                    display_labels=[False, True])
+      disp.plot()
+      plt.title(f"Confusion Matrix ({names[3]})")
+      plt.savefig(outputdir_valid / f"valid_{epoch + 1}_cm_{names[3]}.svg")
+      plt.close()
+
+      # Compute ROC curve (AUC) and PR curve (AP)
+      fpr_valid = {}
+      tpr_valid = {}
+      roc_auc_valid = {}
+      precision_valid = {}
+      recall_valid = {}
+      avg_precision_valid = {}
+      for i in range(4):
+            fpr_valid[i], tpr_valid[i], _ = roc_curve(
+                                          labels_valid_flat[arange_like_valid%4 == 0 + i],
+                                          valid_scores_flat[arange_like_valid%4 == 0 + i])
+            roc_auc_valid[i] = auc(fpr_valid[i], tpr_valid[i])
+
+            precision_valid[i], recall_valid[i], _ = precision_recall_curve(
+                                                labels_valid_flat[arange_like_valid%4 == 0 + i],
+                                                valid_scores_flat[arange_like_valid%4 == 0 + i])
+            avg_precision_valid[i] = average_precision_score(
+                                                labels_valid_flat[arange_like_valid%4 == 0 + i],
+                                                valid_scores_flat[arange_like_valid%4 == 0 + i])
+
+
+      # Compute micro-average ROC curve and ROC area
+      fpr_valid["micro"], tpr_valid["micro"], _ = roc_curve(labels_valid_flat, valid_scores_flat)
+      roc_auc_valid["micro"] = auc(fpr_valid["micro"], tpr_valid["micro"])
+      
+      precision_valid["micro"], recall_valid["micro"], _ = precision_recall_curve(labels_valid_flat,
+                                                                      valid_scores_flat)
+      avg_precision_valid["micro"] = average_precision_score(labels_valid,
+                                                             valid_pred_scores,
+                                                             average="micro")
+
+      # Plot ROC curve
+      custom_params = {"axes.spines.right": False, "axes.spines.top": False}
+      sns.set_theme(style="whitegrid", rc=custom_params)
+      plt.figure()
+      plt.plot(fpr_valid["micro"], tpr_valid["micro"],
+            label='micro-average ROC curve (AUC = {0:0.2f})'
+                  ''.format(roc_auc_valid["micro"]))
+      for i in range(4):
+            plt.plot(fpr_valid[i],
+                  tpr_valid[i],
+                  label=f"ROC curve {names[i]} (AUC = {roc_auc_valid[i]:0.2f})")
+
+      plt.plot([0, 1], [0, 1], 'k--')
+      plt.xlim([0.0, 1.0])
+      plt.ylim([0.0, 1.05])
+      plt.xlabel("False Positive Rate (Fpr)")
+      plt.ylabel("True Positive Rate (Tpr)")
+      plt.title("Validation ROC Lung Cancer Multiclass")
+      plt.legend(loc="lower right")
+      plt.savefig(outputdir_valid / f"valid_{epoch + 1}_roc.svg")
+      plt.close()
+
+      # Plot PR curve
+      sns.set_theme(style="white", rc=custom_params)
+      plt.figure()
+      f_scores = np.linspace(0.2, 0.8, num=4)
+      for f_score in f_scores:
+            x = np.linspace(0.01, 1)
+            y = f_score * x / (2 * x - f_score)
+            (l,) = plt.plot(x[y >= 0], y[y >= 0], color="gray", alpha=0.2)
+            plt.annotate("f1={0:0.1f}".format(f_score), xy=(0.9, y[45] + 0.02))
+
+      plt.plot(recall_valid["micro"], precision_valid["micro"],
+            label='micro-average PR curve (AP = {0:0.2f})'
+                  ''.format(avg_precision_valid["micro"]))
+      for i in range(4):
+            plt.plot(recall_valid[i],
+                  precision_valid[i],
+                  label=f"PR curve {names[i]} (AP = {avg_precision_valid[i]:0.2f})")
+
+      plt.plot([0, 1], [0, 1], 'k--')
+      plt.xlim([0.0, 1.0])
+      plt.ylim([0.0, 1.05])
+      plt.xlabel("Recall")
+      plt.ylabel("Precision")
+      plt.title("Validation PR curve Lung Cancer Multiclass")
+      plt.legend(loc="lower left")
+      plt.savefig(outputdir_valid / f"valid_{epoch + 1}_pr_curve.svg")
+      plt.close()
+
+      # Load Test patches
+      pyhistdir = Path(datadir / "Mask_PyHIST_v2")
+
+      dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
+
+      patches_path = {}
+      for wsi_patches_path in tqdm(dataset_path, desc="Selecting patches: "):
+
+            csv_patch_path = pd.read_csv(wsi_patches_path).to_numpy()
             
-            filename_test_predictions = Path(outputdir / f"test_predictions_{epoch + 1}.csv")
-            df_predictions.to_csv(filename_test_predictions) 
+            name = wsi_patches_path.parent.stem
+            patches_path[name] = csv_patch_path
 
-            arange_like_predictions = np.arange(len(y_true))
-            names = ["SCC", "NSCC_Adeno", "NSCC_Squamous", "Normal"]
+      logging.info(f"Total number of patches for train/validation/test {len(patches_path)}")
 
-            y_pred = np.where(scores_pred > 0.5, 1, 0)
+      patches_train = {}
+      patches_validation = {}
+      patches_test = {}
+      for value, key in zip(patches_path.values(), patches_path.keys()):
+            if key in train_dataset:
+                  patches_train[key] = value
+            if key in validation_dataset:
+                  patches_validation[key] = value
+            if key in test_dataset:
+                  patches_test[key] = value
 
-            # Compute ROC curve and ROC area for each class
-            fpr = dict()
-            tpr = dict()
-            precision = {}
-            recall = {}
-            avg_precision = {}
-            roc_auc = dict()
-            for i in range(4):
-                  fpr[i], tpr[i], _ = roc_curve(y_true[arange_like_predictions%4 == 0 + i],
-                                                scores_pred[arange_like_predictions%4 == 0 + i])
-                  roc_auc[i] = auc(fpr[i], tpr[i])
+      logging.info(f"Total number of wsi for train {len(patches_train.values())}")
+      logging.info(f"Total number of wsi for validation {len(patches_validation.values())}")
+      logging.info(f"Total number of patches for test {len(patches_test)}")
+      logging.info("")
 
-                  precision[i], recall[i], _ = precision_recall_curve(y_true[arange_like_predictions%4 == 0 + i],
-                                                                      scores_pred[arange_like_predictions%4 == 0 + i])
-                  avg_precision[i] = average_precision_score(y_true[arange_like_predictions%4 == 0 + i],
-                                                             scores_pred[arange_like_predictions%4 == 0 + i])
-                  print(scores_pred[arange_like_predictions%4 == 0 + i])
-                  print(y_pred[arange_like_predictions%4 == 0 + i])
-                  
-                  accuracy = accuracy_score(y_true[arange_like_predictions%4 == 0 + i],
-                                          y_pred[arange_like_predictions%4 == 0 + i])
+      # Load datasets
+      batch_size_bag = cfg.dataloader.batch_size_bag
 
-                  print("== Final Metrics ==")
-                  print(f"Accuracy {names[i]} = {accuracy:0.2f}")
+      params_train_bag = {'batch_size': batch_size_bag,
+                        'shuffle': False}
 
-                  bma = balanced_accuracy_score(y_true[arange_like_predictions%4 == 0 + i],
-                                                y_pred[arange_like_predictions%4 == 0 + i])
-                  kappa = cohen_kappa_score(y_true[arange_like_predictions%4 == 0 + i],
-                                          y_pred[arange_like_predictions%4 == 0 + i])
-                  print(f"BMA {names[i]} = {bma:0.2f}")
-                  print(f"Kappa {names[i]} = {kappa:0.2f}")
+      train_set_bag = Dataset_bag_MIL(train_dataset, train_labels)
+      train_generator_bag = DataLoader(train_set_bag, **params_train_bag)
 
-            # Compute micro-average ROC curve and ROC area
-            fpr["micro"], tpr["micro"], _ = roc_curve(y_true, scores_pred)
-            roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+      params_valid_bag = {'batch_size': batch_size_bag,
+                        'shuffle': False}
 
-            # Plot ROC curve
-            custom_params = {"axes.spines.right": False, "axes.spines.top": False}
-            sns.set_theme(style="whitegrid", rc=custom_params)
-            plt.figure()
-            plt.plot(fpr["micro"], tpr["micro"],
-                  label='micro-average ROC curve (area = {0:0.2f})'
-                        ''.format(roc_auc["micro"]))
-            for i in range(4):
-                  plt.plot(fpr[i], tpr[i], label=f"ROC curve {names[i]} (AUC = {roc_auc[i]:0.2f})")
+      valid_set_bag = Dataset_bag_MIL(validation_dataset, validation_labels)
+      valid_generator_bag = DataLoader(valid_set_bag, **params_valid_bag)
 
-            plt.plot([0, 1], [0, 1], 'k--')
-            plt.xlim([0.0, 1.0])
-            plt.ylim([0.0, 1.05])
-            plt.xlabel("False Positive Rate (Fpr)")
-            plt.ylabel("True Positive Rate (Tpr)")
-            plt.title("Test ROC Lung Cancer Multiclass")
-            plt.legend(loc="lower right")
-            plt.savefig(outputdir / f"test_{epoch + 1}_roc.svg")
-            plt.clf()
+      params_test_bag = {'batch_size': batch_size_bag,
+                        'shuffle': False}
 
-            sns.set_theme(style="whitegrid", rc=custom_params)
-            plt.figure()
-            for i in range(4):
-                  plt.plot(recall[i], precision[i], label=f"PR curve {names[i]} (AP = {avg_precision[i]:0.2f})")
+      test_set_bag = Dataset_bag_MIL(test_dataset, test_labels)
+      test_generator_bag = DataLoader(test_set_bag, **params_test_bag)
 
-            plt.plot([0, 1], [0, 1], 'k--')
-            plt.xlim([0.0, 1.0])
-            plt.ylim([0.0, 1.05])
-            plt.xlabel("Recall")
-            plt.ylabel("Precision")
-            plt.title("Test PR Lung Cancer Multiclass")
-            plt.legend(loc="top right")
-            plt.savefig(outputdir / f"test_{epoch + 1}_pr_curve.svg")
-            plt.clf()
+      # Data normalization
+      preprocess = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=cfg.dataset.mean, std=cfg.dataset.stddev),
+            transforms.Resize(size=(model.resize_param, model.resize_param),
+            antialias=True)
+      ])
 
-elif dataset == "valid":
-      # Validation
-      outputdir = Path(bestdir / "valid")
-      Path(outputdir).mkdir(exist_ok=True, parents=True)
+      if dataset == "test":
+            # Test
+            outputdir = Path(bestdir / "test_metrics")
+            Path(outputdir).mkdir(exist_ok=True, parents=True)
 
-      filenames_wsis = []
-      pred_scc = []
-      pred_nscc_adeno = []
-      pred_nscc_squamous = []
-      pred_normal = []
+            filenames_wsis = []
+            pred_scc = []
+            pred_nscc_adeno = []
+            pred_nscc_squamous = []
+            pred_normal = []
 
-      y_pred = []
-      y_true = []
-      scores_pred = []
+            y_pred = []
+            y_true = []
+            scores_pred = []
 
-      iterations_valid= int(len(validation_dataset))
-      dataloader_iterator = iter(valid_generator_bag)
-      with torch.no_grad():
-            for i in range(iterations_valid):
-                  print(f"Iterations: {i + 1} / {iterations_valid}")
-                  try:
-                        wsi_id, labels = next(dataloader_iterator)
-                  except StopIteration:
-                        dataloader_iterator = iter(valid_generator_bag)
-                        wsi_id, labels = next(dataloader_iterator)
-                        #inputs: bags, labels: labels of the bags
+            iterations_test= int(len(test_dataset))
+            dataloader_iterator = iter(test_generator_bag)
+            with torch.no_grad():
+                  for i in range(iterations_test):
+                        logging.info(f"Iterations: {i + 1} / {iterations_test}")
+                        try:
+                              wsi_id, labels = next(dataloader_iterator)
+                        except StopIteration:
+                              dataloader_iterator = iter(test_generator_bag)
+                              wsi_id, labels = next(dataloader_iterator)
+                              #inputs: bags, labels: labels of the bags
 
-                  wsi_id = wsi_id[0]
-                  labels = torch.stack(labels)
-                  labels_np = labels.cpu().numpy().flatten()
+                        wsi_id = wsi_id[0]
+                        
+                        labels_np = labels.cpu().numpy().flatten()
 
-                  labels_local = labels.float().flatten().to(device, non_blocking=True)
+                        test_generator_instance = get_generator_instances(patches_test[wsi_id], 
+                                                                        preprocess,
+                                                                        cfg.dataloader.batch_size, 
+                                                                        None,
+                                                                        cfg.dataloader.num_workers) 
 
-                  valid_generator_instance = get_generator_instances(patches_validation[wsi_id], 
-                                                                     preprocess,
-                                                                     cfg.dataloader.batch_size, 
-                                                                     None,
-                                                                     cfg.dataloader.num_workers) 
+                        n_elems = len(patches_test[wsi_id])   
 
-                  n_elems = len(patches_validation[wsi_id])   
+                        features = []
+                        
+                        for instances in test_generator_instance:
+                              instances = instances.to(device, non_blocking=True)
 
-                  features = []
-                  
-                  for instances in valid_generator_instance:
-                        instances = instances.to(device, non_blocking=True)
+                              # forward + backward + optimize
+                              feats = net.conv_layers(instances)
+                              feats = feats.view(-1, net.fc_input_features)
+                              feats_np = feats.cpu().data.numpy()
 
-                        # forward + backward + optimize
-                        feats = net.conv_layers(instances)
-                        feats = feats.view(-1, net.fc_input_features)
-                        feats_np = feats.cpu().data.numpy()
+                              features.extend(feats_np)
 
-                        features.extend(feats_np)
-
+                                    #del instances
                               #del instances
-                        #del instances
-                  features_np = np.reshape(features,(n_elems, net.fc_input_features))
+                        features_np = np.reshape(features,(n_elems, net.fc_input_features))
 
-                  inputs = torch.tensor(features_np).float().to(device, non_blocking=True)
+                        inputs = torch.tensor(features_np).float().to(device, non_blocking=True)
+                        
+                        logits_img, _ = net(None, inputs)
+
+
+                        sigmoid_output_img = F.sigmoid(logits_img)
+                        outputs_wsi_np_img = sigmoid_output_img.cpu().numpy()
+
+                        logging.info(f"pred_img: {outputs_wsi_np_img}")
+
+                        filenames_wsis.append(wsi_id)
+                        pred_scc.append(outputs_wsi_np_img[0])
+                        pred_nscc_adeno.append(outputs_wsi_np_img[1])
+                        pred_nscc_squamous.append(outputs_wsi_np_img[2])
+                        pred_normal.append(outputs_wsi_np_img[3])
+
+                        output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
+
+                        y_pred = np.append(y_pred, output_norm)
+                        y_true = np.append(y_true, labels_np)
+                        scores_pred= np.append(scores_pred, outputs_wsi_np_img)
+                        
+                        micro_accuracy_test = accuracy_score(y_true, y_pred)
+                        logging.info(f"micro_accuracy test {micro_accuracy_test}") 
+
+                  File = {'filenames': filenames_wsis,
+                  'pred_scc': pred_scc, 
+                  'pred_nscc_adeno': pred_nscc_adeno,
+                  'pred_nscc_squamous': pred_nscc_squamous, 
+                  'pred_normal': pred_normal}
+
+                  df_predictions = pd.DataFrame.from_dict(File)
                   
-                  logits_img, _ = net(None, inputs)
+                  filename_test_predictions = Path(outputdir / f"test_predictions_{epoch + 1}.csv")
+                  df_predictions.to_csv(filename_test_predictions) 
 
-
-                  sigmoid_output_img = F.sigmoid(logits_img)
-                  outputs_wsi_np_img = sigmoid_output_img.cpu().numpy()
-
-                  print(f"pred_img: {outputs_wsi_np_img}")
-
-                  filenames_wsis.append(wsi_id)
-                  pred_scc.append(outputs_wsi_np_img[0])
-                  pred_nscc_adeno.append(outputs_wsi_np_img[1])
-                  pred_nscc_squamous.append(outputs_wsi_np_img[2])
-                  pred_normal.append(outputs_wsi_np_img[3])
-
-                  output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
-
-                  y_pred = np.append(y_pred, output_norm)
-                  y_true = np.append(y_true, labels_np)
-                  scores_pred= np.append(scores_pred, outputs_wsi_np_img)
+                  arange_like_predictions = np.arange(len(y_true))
                   
-                  accuracy_valid = accuracy_score(y_true, y_pred)
-                  print(f"micro_accuracy validation {accuracy_valid}") 
+                  y_pred_reshape = y_pred.reshape(len(test_dataset), 4)
+                  y_true_reshape = y_true.reshape(len(test_dataset), 4)
+                  scores_pred_reshape = scores_pred.reshape(len(test_dataset), 4)
 
-            File = {'filenames': filenames_wsis,
-            'pred_scc': pred_scc, 
-            'pred_nscc_adeno': pred_nscc_adeno,
-            'pred_nscc_squamous': pred_nscc_squamous, 
-            'pred_normal': pred_normal}
+                  confusion_matrix = multilabel_confusion_matrix(y_true_reshape, y_pred_reshape)
 
-            df_predictions = pd.DataFrame.from_dict(File)
-            
-            filename_valid_predictions = Path(outputdir / f"valid_predictions_{epoch + 1}.csv")
-            df_predictions.to_csv(filename_valid_predictions) 
+                  plt.figure()
+                  disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix[0, :, :],
+                                                display_labels=[False, True])
+                  disp.plot()
+                  plt.title(f"Confusion Matrix ({names[0]})")
+                  plt.savefig(outputdir / f"test_{epoch + 1}_cm_{names[0]}.svg")
+                  plt.close()
 
-            arange_like_predictions = np.arange(len(y_true))
-            names = ["SCC", "NSCC_Adeno", "NSCC_Squamous", "Normal"]
+                  plt.figure()
+                  disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix[1, :, :],
+                                                display_labels=[False, True])
+                  disp.plot()
+                  plt.title(f"Confusion Matrix ({names[1]})")
+                  plt.savefig(outputdir / f"test_{epoch + 1}_cm_{names[1]}.svg")
+                  plt.close()
 
-            y_pred = np.where(scores_pred > 0.5, 1, 0)
+                  plt.figure()
+                  disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix[2, :, :],
+                                                display_labels=[False, True])
+                  disp.plot()
+                  plt.title(f"Confusion Matrix ({names[2]})")
+                  plt.savefig(outputdir / f"test_{epoch + 1}_cm_{names[2]}.svg")
+                  plt.close()
 
-            # Compute ROC curve and ROC area for each class
-            fpr = dict()
-            tpr = dict()
-            roc_auc = dict()
-            for i in range(4):
-                  fpr[i], tpr[i], _ = roc_curve(y_true[arange_like_predictions%4 == 0 + i],
+                  plt.figure()
+                  disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix[3, :, :],
+                                                display_labels=[False, True])
+                  disp.plot()
+                  plt.title(f"Confusion Matrix ({names[3]})")
+                  plt.savefig(outputdir / f"test_{epoch + 1}_cm_{names[3]}.svg")
+                  plt.close()
+
+                  # Compute ROC curve and ROC area for each class
+                  fpr = dict()
+                  tpr = dict()
+                  precision = {}
+                  recall = {}
+                  avg_precision = {}
+                  roc_auc = dict()
+
+                  logging.info("")
+                  logging.info("== Final Metrics Test ==")
+                  for i in range(4):
+                        fpr[i], tpr[i], _ = roc_curve(
+                                                y_true[arange_like_predictions%4 == 0 + i],
                                                 scores_pred[arange_like_predictions%4 == 0 + i])
-                  roc_auc[i] = auc(fpr[i], tpr[i])
-                  
-                  print(scores_pred[arange_like_predictions%4 == 0 + i])
-                  print(y_pred[arange_like_predictions%4 == 0 + i])
-                  
-                  accuracy = accuracy_score(y_true[arange_like_predictions%4 == 0 + i],
-                                          y_pred[arange_like_predictions%4 == 0 + i])
+                        roc_auc[i] = auc(fpr[i], tpr[i])
 
-                  print("== Final Metrics ==")
-                  print(f"Accuracy {names[i]} = {accuracy:0.2f}")
+                        precision[i], recall[i], _ = precision_recall_curve(
+                                                      y_true[arange_like_predictions%4 == 0 + i],
+                                                      scores_pred[arange_like_predictions%4 == 0 + i])
+                        avg_precision[i] = average_precision_score(
+                                                      y_true[arange_like_predictions%4 == 0 + i],
+                                                      scores_pred[arange_like_predictions%4 == 0 + i])
 
-                  bma = balanced_accuracy_score(y_true[arange_like_predictions%4 == 0 + i],
+
+                        accuracy = accuracy_score(y_true[arange_like_predictions%4 == 0 + i],
                                                 y_pred[arange_like_predictions%4 == 0 + i])
-                  kappa = cohen_kappa_score(y_true[arange_like_predictions%4 == 0 + i],
-                                          y_pred[arange_like_predictions%4 == 0 + i])
-                  print(f"BMA {names[i]} = {bma:0.2f}")
-                  print(f"Kappa {names[i]} = {kappa:0.2f}")
 
-            # Compute micro-average ROC curve and ROC area
-            fpr["micro"], tpr["micro"], _ = roc_curve(y_true, scores_pred)
-            roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+                        logging.info(f"Accuracy {names[i]} = {accuracy:0.2f}")
 
-            # Plot ROC curve
-            custom_params = {"axes.spines.right": False, "axes.spines.top": False}
-            sns.set_theme(style="whitegrid", rc=custom_params)
-            plt.figure()
-            plt.plot(fpr["micro"], tpr["micro"],
-                  label='micro-average ROC curve (area = {0:0.2f})'
-                        ''.format(roc_auc["micro"]))
-            for i in range(4):
-                  plt.plot(fpr[i], tpr[i], label=f"ROC curve {names[i]} (AUC = {roc_auc[i]:0.2f})")
+                        bma = balanced_accuracy_score(y_true[arange_like_predictions%4 == 0 + i],
+                                                      y_pred[arange_like_predictions%4 == 0 + i])
+                        kappa = cohen_kappa_score(y_true[arange_like_predictions%4 == 0 + i],
+                                                y_pred[arange_like_predictions%4 == 0 + i])
+                        logging.info(f"BMA {names[i]} = {bma:0.2f}")
+                        logging.info(f"Kappa {names[i]} = {kappa:0.2f}")
+                        logging.info("")
 
-            plt.plot([0, 1], [0, 1], 'k--')
-            plt.xlim([0.0, 1.0])
-            plt.ylim([0.0, 1.05])
-            plt.xlabel("False Positive Rate (Fpr)")
-            plt.ylabel("True Positive Rate (Tpr)")
-            plt.title("Validation ROC Lung Cancer Multiclass")
-            plt.legend(loc="lower right")
-            plt.savefig(outputdir / f"valid_{epoch + 1}_roc.svg")
-            plt.clf()
-
-elif dataset == "train":
-      # Train
-      outputdir = Path(bestdir / "train")
-      Path(outputdir).mkdir(exist_ok=True, parents=True)
-
-      filenames_wsis = []
-      pred_scc = []
-      pred_nscc_adeno = []
-      pred_nscc_squamous = []
-      pred_normal = []
-
-      y_pred = []
-      y_true = []
-      scores_pred = []
-
-      iterations_train= int(len(train_dataset))
-      dataloader_iterator = iter(train_generator_bag)
-      with torch.no_grad():
-            for i in range(iterations_train):
-                  print(f"Iterations: {i + 1} / {iterations_train}")
-                  try:
-                        wsi_id, labels = next(dataloader_iterator)
-                  except StopIteration:
-                        dataloader_iterator = iter(train_generator_bag)
-                        wsi_id, labels = next(dataloader_iterator)
-                        #inputs: bags, labels: labels of the bags
-
-                  wsi_id = wsi_id[0]
-
-                  labels = torch.stack(labels)
-                  labels_np = labels.cpu().numpy().flatten()
-
-                  labels_local = labels.float().flatten().to(device, non_blocking=True)
-
-                  train_generator_instance = get_generator_instances(patches_train[wsi_id], 
-                                                                  preprocess,
-                                                                  cfg.dataloader.batch_size, 
-                                                                  None,
-                                                                  cfg.dataloader.num_workers) 
-
-                  n_elems = len(patches_train[wsi_id])   
-
-                  features = []
+                  # Compute micro-average ROC curve and ROC area
+                  fpr["micro"], tpr["micro"], _ = roc_curve(y_true, scores_pred)
+                  roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
                   
-                  for instances in train_generator_instance:
-                        instances = instances.to(device, non_blocking=True)
+                  precision["micro"], recall["micro"], _ = precision_recall_curve(y_true,
+                                                                                  scores_pred)
+                  avg_precision["micro"] = average_precision_score(y_true_reshape,
+                                                                  scores_pred_reshape,
+                                                                  average="micro")
 
-                        # forward + backward + optimize
-                        feats = net.conv_layers(instances)
-                        feats = feats.view(-1, net.fc_input_features)
-                        feats_np = feats.cpu().data.numpy()
+                  # Plot ROC curve
+                  custom_params = {"axes.spines.right": False, "axes.spines.top": False}
+                  sns.set_theme(style="whitegrid", rc=custom_params)
+                  plt.figure()
+                  plt.plot(fpr["micro"], tpr["micro"],
+                        label='micro-average ROC curve (AUC = {0:0.2f})'
+                              ''.format(roc_auc["micro"]))
+                  for i in range(4):
+                        plt.plot(fpr[i],
+                              tpr[i],
+                              label=f"ROC curve {names[i]} (AUC = {roc_auc[i]:0.2f})")
 
-                        features.extend(feats_np)
+                  plt.plot([0, 1], [0, 1], 'k--')
+                  plt.xlim([0.0, 1.0])
+                  plt.ylim([0.0, 1.05])
+                  plt.xlabel("False Positive Rate (Fpr)")
+                  plt.ylabel("True Positive Rate (Tpr)")
+                  plt.title("Test ROC Lung Cancer Multiclass")
+                  plt.legend(loc="lower right")
+                  plt.savefig(outputdir / f"test_{epoch + 1}_roc.svg")
+                  plt.close()
 
+
+                  sns.set_theme(style="white", rc=custom_params)
+                  plt.figure()
+                  f_scores = np.linspace(0.2, 0.8, num=4)
+                  for f_score in f_scores:
+                        x = np.linspace(0.01, 1)
+                        y = f_score * x / (2 * x - f_score)
+                        (l,) = plt.plot(x[y >= 0], y[y >= 0], color="gray", alpha=0.2)
+                        plt.annotate("f1={0:0.1f}".format(f_score), xy=(0.9, y[45] + 0.02))
+
+                  plt.plot(recall["micro"], precision["micro"],
+                        label='micro-average PR curve (AP = {0:0.2f})'
+                              ''.format(avg_precision["micro"]))
+                  for i in range(4):
+                        plt.plot(recall[i],
+                              precision[i],
+                              label=f"PR curve {names[i]} (AP = {avg_precision[i]:0.2f})")
+
+                  plt.plot([0, 1], [0, 1], 'k--')
+                  plt.xlim([0.0, 1.0])
+                  plt.ylim([0.0, 1.05])
+                  plt.xlabel("Recall")
+                  plt.ylabel("Precision")
+                  plt.title("Test PR curve Lung Cancer Multiclass")
+                  plt.legend(loc="lower left")
+                  plt.savefig(outputdir / f"test_{epoch + 1}_pr_curve.svg")
+                  plt.close()
+
+      elif dataset == "valid":
+            # Validation
+            outputdir = Path(bestdir / "valid")
+            Path(outputdir).mkdir(exist_ok=True, parents=True)
+
+            filenames_wsis = []
+            pred_scc = []
+            pred_nscc_adeno = []
+            pred_nscc_squamous = []
+            pred_normal = []
+
+            y_pred = []
+            y_true = []
+            scores_pred = []
+
+            iterations_valid= int(len(validation_dataset))
+            dataloader_iterator = iter(valid_generator_bag)
+            with torch.no_grad():
+                  for i in range(iterations_valid):
+                        logging.info(f"Iterations: {i + 1} / {iterations_valid}")
+                        try:
+                              wsi_id, labels = next(dataloader_iterator)
+                        except StopIteration:
+                              dataloader_iterator = iter(valid_generator_bag)
+                              wsi_id, labels = next(dataloader_iterator)
+                              #inputs: bags, labels: labels of the bags
+
+                        wsi_id = wsi_id[0]
+                        labels = torch.stack(labels)
+                        labels_np = labels.cpu().numpy().flatten()
+
+                        valid_generator_instance = get_generator_instances(
+                                                                        patches_validation[wsi_id], 
+                                                                        preprocess,
+                                                                        cfg.dataloader.batch_size, 
+                                                                        None,
+                                                                        cfg.dataloader.num_workers) 
+
+                        n_elems = len(patches_validation[wsi_id])   
+
+                        features = []
+                        
+                        for instances in valid_generator_instance:
+                              instances = instances.to(device, non_blocking=True)
+
+                              # forward + backward + optimize
+                              feats = net.conv_layers(instances)
+                              feats = feats.view(-1, net.fc_input_features)
+                              feats_np = feats.cpu().data.numpy()
+
+                              features.extend(feats_np)
+
+                                    #del instances
                               #del instances
-                        #del instances
-                  features_np = np.reshape(features,(n_elems, net.fc_input_features))
+                        features_np = np.reshape(features,(n_elems, net.fc_input_features))
 
-                  inputs = torch.tensor(features_np).float().to(device, non_blocking=True)
+                        inputs = torch.tensor(features_np).float().to(device, non_blocking=True)
+                        
+                        logits_img, _ = net(None, inputs)
+
+
+                        sigmoid_output_img = F.sigmoid(logits_img)
+                        outputs_wsi_np_img = sigmoid_output_img.cpu().numpy()
+
+                        logging.info(f"pred_img: {outputs_wsi_np_img}")
+
+                        filenames_wsis.append(wsi_id)
+                        pred_scc.append(outputs_wsi_np_img[0])
+                        pred_nscc_adeno.append(outputs_wsi_np_img[1])
+                        pred_nscc_squamous.append(outputs_wsi_np_img[2])
+                        pred_normal.append(outputs_wsi_np_img[3])
+
+                        output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
+
+                        y_pred = np.append(y_pred, output_norm)
+                        y_true = np.append(y_true, labels_np)
+                        scores_pred= np.append(scores_pred, outputs_wsi_np_img)
+                        
+                        accuracy_valid = accuracy_score(y_true, y_pred)
+                        logging.info(f"micro_accuracy validation {accuracy_valid}") 
+
+                  File = {'filenames': filenames_wsis,
+                  'pred_scc': pred_scc, 
+                  'pred_nscc_adeno': pred_nscc_adeno,
+                  'pred_nscc_squamous': pred_nscc_squamous, 
+                  'pred_normal': pred_normal}
+
+                  df_predictions = pd.DataFrame.from_dict(File)
                   
-                  logits_img, _ = net(None, inputs)
+                  filename_valid_predictions = Path(outputdir /
+                                                    f"valid_predictions_{epoch + 1}.csv")
+                  df_predictions.to_csv(filename_valid_predictions) 
+
+                  arange_like_predictions = np.arange(len(y_true))
+
+                  y_pred_reshape = y_pred.reshape(len(validation_dataset), 4)
+                  y_true_reshape = y_true.reshape(len(validation_dataset), 4)
+                  scores_pred_reshape = scores_pred.reshape(len(validation_dataset), 4)
+
+                  confusion_matrix = multilabel_confusion_matrix(y_true_reshape, y_pred_reshape)
+
+                  plt.figure()
+                  disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix[0, :, :],
+                                                display_labels=[False, True])
+                  disp.plot()
+                  plt.title(f"Confusion Matrix ({names[0]})")
+                  plt.savefig(outputdir / f"valid_{epoch + 1}_cm_{names[0]}.svg")
+                  plt.close()
+
+                  plt.figure()
+                  disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix[1, :, :],
+                                                display_labels=[False, True])
+                  disp.plot()
+                  plt.title(f"Confusion Matrix ({names[1]})")
+                  plt.savefig(outputdir / f"valid_{epoch + 1}_cm_{names[1]}.svg")
+                  plt.close()
+
+                  plt.figure()
+                  disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix[2, :, :],
+                                                display_labels=[False, True])
+                  disp.plot()
+                  plt.title(f"Confusion Matrix ({names[2]})")
+                  plt.savefig(outputdir / f"valid_{epoch + 1}_cm_{names[2]}.svg")
+                  plt.close()
+
+                  plt.figure()
+                  disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix[3, :, :],
+                                                display_labels=[False, True])
+                  disp.plot()
+                  plt.title(f"Confusion Matrix ({names[3]})")
+                  plt.savefig(outputdir / f"valid_{epoch + 1}_cm_{names[3]}.svg")
+                  plt.close()
+
+                  # Compute ROC curve and ROC area for each class
+                  fpr = dict()
+                  tpr = dict()
+                  precision = {}
+                  recall = {}
+                  avg_precision = {}
+                  roc_auc = dict()
+                  for i in range(4):
+                        fpr[i], tpr[i], _ = roc_curve(y_true[arange_like_predictions%4 == 0 + i],
+                                                      scores_pred[arange_like_predictions%4 == 0 + i])
+                        roc_auc[i] = auc(fpr[i], tpr[i])
+
+                        precision[i], recall[i], _ = precision_recall_curve(y_true[arange_like_predictions%4 == 0 + i],
+                                                                        scores_pred[arange_like_predictions%4 == 0 + i])
+                        avg_precision[i] = average_precision_score(y_true[arange_like_predictions%4 == 0 + i],
+                                                                  scores_pred[arange_like_predictions%4 == 0 + i])
 
 
-                  sigmoid_output_img = F.sigmoid(logits_img)
-                  outputs_wsi_np_img = sigmoid_output_img.cpu().numpy()
-
-                  print(f"pred_img: {outputs_wsi_np_img}")
-
-                  filenames_wsis.append(wsi_id)
-                  pred_scc.append(outputs_wsi_np_img[0])
-                  pred_nscc_adeno.append(outputs_wsi_np_img[1])
-                  pred_nscc_squamous.append(outputs_wsi_np_img[2])
-                  pred_normal.append(outputs_wsi_np_img[3])
-
-                  output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
-
-                  y_pred = np.append(y_pred, output_norm)
-                  y_true = np.append(y_true, labels_np)
-                  scores_pred= np.append(scores_pred, outputs_wsi_np_img)
-                  
-                  accuracy_train = accuracy_score(y_true, y_pred)
-                  print(f"micro_accuracy train {accuracy_train}") 
-
-            File = {'filenames': filenames_wsis,
-            'pred_scc': pred_scc, 
-            'pred_nscc_adeno': pred_nscc_adeno,
-            'pred_nscc_squamous': pred_nscc_squamous, 
-            'pred_normal': pred_normal}
-
-            df_predictions = pd.DataFrame.from_dict(File)
-            
-            filename_train_predictions = Path(outputdir / f"train_predictions_{epoch + 1}.csv")
-            df_predictions.to_csv(filename_train_predictions) 
-
-            arange_like_predictions = np.arange(len(y_true))
-            names = ["SCC", "NSCC_Adeno", "NSCC_Squamous", "Normal"]
-
-            y_pred = np.where(scores_pred > 0.5, 1, 0)
-
-            # Compute ROC curve and ROC area for each class
-            fpr = dict()
-            tpr = dict()
-            roc_auc = dict()
-            for i in range(4):
-                  fpr[i], tpr[i], _ = roc_curve(y_true[arange_like_predictions%4 == 0 + i],
-                                                scores_pred[arange_like_predictions%4 == 0 + i])
-                  roc_auc[i] = auc(fpr[i], tpr[i])
-                  
-                  print(scores_pred[arange_like_predictions%4 == 0 + i])
-                  print(y_pred[arange_like_predictions%4 == 0 + i])
-                  
-                  accuracy = accuracy_score(y_true[arange_like_predictions%4 == 0 + i],
-                                          y_pred[arange_like_predictions%4 == 0 + i])
-
-                  print("== Final Metrics ==")
-                  print(f"Accuracy {names[i]} = {accuracy:0.2f}")
-
-                  bma = balanced_accuracy_score(y_true[arange_like_predictions%4 == 0 + i],
+                        accuracy = accuracy_score(y_true[arange_like_predictions%4 == 0 + i],
                                                 y_pred[arange_like_predictions%4 == 0 + i])
-                  kappa = cohen_kappa_score(y_true[arange_like_predictions%4 == 0 + i],
-                                          y_pred[arange_like_predictions%4 == 0 + i])
-                  print(f"BMA {names[i]} = {bma:0.2f}")
-                  print(f"Kappa {names[i]} = {kappa:0.2f}")
 
-            # Compute micro-average ROC curve and ROC area
-            fpr["micro"], tpr["micro"], _ = roc_curve(y_true, scores_pred)
-            roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+                        logging.info("== Final Metrics  Validation ==")
+                        logging.info(f"Accuracy {names[i]} = {accuracy:0.2f}")
 
-            # Plot ROC curve
-            custom_params = {"axes.spines.right": False, "axes.spines.top": False}
-            sns.set_theme(style="whitegrid", rc=custom_params)
-            plt.figure()
-            plt.plot(fpr["micro"], tpr["micro"],
-                  label='micro-average ROC curve (area = {0:0.2f})'
-                        ''.format(roc_auc["micro"]))
-            for i in range(4):
-                  plt.plot(fpr[i], tpr[i], label=f"ROC curve {names[i]} (AUC = {roc_auc[i]:0.2f})")
+                        bma = balanced_accuracy_score(y_true[arange_like_predictions%4 == 0 + i],
+                                                      y_pred[arange_like_predictions%4 == 0 + i])
+                        kappa = cohen_kappa_score(y_true[arange_like_predictions%4 == 0 + i],
+                                                y_pred[arange_like_predictions%4 == 0 + i])
+                        logging.info(f"BMA {names[i]} = {bma:0.2f}")
+                        logging.info(f"Kappa {names[i]} = {kappa:0.2f}")
 
-            plt.plot([0, 1], [0, 1], 'k--')
-            plt.xlim([0.0, 1.0])
-            plt.ylim([0.0, 1.05])
-            plt.xlabel("False Positive Rate (Fpr)")
-            plt.ylabel("True Positive Rate (Tpr)")
-            plt.title("Train ROC Lung Cancer Multiclass")
-            plt.legend(loc="lower right")
-            plt.savefig(outputdir / f"train_{epoch + 1}_roc.svg")
-            plt.clf()
+                  # Compute micro-average ROC curve and ROC area
+                  fpr["micro"], tpr["micro"], _ = roc_curve(y_true, scores_pred)
+                  roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+                  
+                  precision["micro"], recall["micro"], _ = precision_recall_curve(y_true, scores_pred)
+                  avg_precision["micro"] = average_precision_score(y_true_reshape,
+                                                                  scores_pred_reshape,
+                                                                  average="micro")
+
+                  # Plot ROC curve
+                  custom_params = {"axes.spines.right": False, "axes.spines.top": False}
+                  sns.set_theme(style="whitegrid", rc=custom_params)
+                  plt.figure()
+                  plt.plot(fpr["micro"], tpr["micro"],
+                        label='micro-average ROC curve (AUC = {0:0.2f})'
+                              ''.format(roc_auc["micro"]))
+                  for i in range(4):
+                        plt.plot(fpr[i],
+                              tpr[i],
+                              label=f"ROC curve {names[i]} (AUC = {roc_auc[i]:0.2f})")
+
+                  plt.plot([0, 1], [0, 1], 'k--')
+                  plt.xlim([0.0, 1.0])
+                  plt.ylim([0.0, 1.05])
+                  plt.xlabel("False Positive Rate (Fpr)")
+                  plt.ylabel("True Positive Rate (Tpr)")
+                  plt.title("Validation ROC Lung Cancer Multiclass")
+                  plt.legend(loc="lower right")
+                  plt.savefig(outputdir / f"valid_{epoch + 1}_roc.svg")
+                  plt.close()
+
+
+                  sns.set_theme(style="white", rc=custom_params)
+                  plt.figure()
+                  f_scores = np.linspace(0.2, 0.8, num=4)
+                  for f_score in f_scores:
+                        x = np.linspace(0.01, 1)
+                        y = f_score * x / (2 * x - f_score)
+                        (l,) = plt.plot(x[y >= 0], y[y >= 0], color="gray", alpha=0.2)
+                        plt.annotate("f1={0:0.1f}".format(f_score), xy=(0.9, y[45] + 0.02))
+
+                  plt.plot(recall["micro"], precision["micro"],
+                        label='micro-average PR curve (AP = {0:0.2f})'
+                              ''.format(avg_precision["micro"]))
+                  for i in range(4):
+                        plt.plot(recall[i],
+                              precision[i],
+                              label=f"PR curve {names[i]} (AP = {avg_precision[i]:0.2f})")
+
+                  plt.plot([0, 1], [0, 1], 'k--')
+                  plt.xlim([0.0, 1.0])
+                  plt.ylim([0.0, 1.05])
+                  plt.xlabel("Recall")
+                  plt.ylabel("Precision")
+                  plt.title("Validation PR curve Lung Cancer Multiclass")
+                  plt.legend(loc="lower left")
+                  plt.savefig(outputdir / f"valid_{epoch + 1}_pr_curve.svg")
+                  plt.close()
+
+      elif dataset == "train":
+            # Train
+            outputdir = Path(bestdir / "train")
+            Path(outputdir).mkdir(exist_ok=True, parents=True)
+
+            filenames_wsis = []
+            pred_scc = []
+            pred_nscc_adeno = []
+            pred_nscc_squamous = []
+            pred_normal = []
+
+            y_pred = []
+            y_true = []
+            scores_pred = []
+
+            iterations_train= int(len(train_dataset))
+            dataloader_iterator = iter(train_generator_bag)
+            with torch.no_grad():
+                  for i in range(iterations_train):
+                        logging.info(f"Iterations: {i + 1} / {iterations_train}")
+                        try:
+                              wsi_id, labels = next(dataloader_iterator)
+                        except StopIteration:
+                              dataloader_iterator = iter(train_generator_bag)
+                              wsi_id, labels = next(dataloader_iterator)
+                              #inputs: bags, labels: labels of the bags
+
+                        wsi_id = wsi_id[0]
+
+                        labels = torch.stack(labels)
+                        labels_np = labels.cpu().numpy().flatten()
+
+                        train_generator_instance = get_generator_instances(patches_train[wsi_id], 
+                                                                        preprocess,
+                                                                        cfg.dataloader.batch_size, 
+                                                                        None,
+                                                                        cfg.dataloader.num_workers) 
+
+                        n_elems = len(patches_train[wsi_id])   
+
+                        features = []
+                        for instances in train_generator_instance:
+                              instances = instances.to(device, non_blocking=True)
+
+                              # forward + backward + optimize
+                              feats = net.conv_layers(instances)
+                              feats = feats.view(-1, net.fc_input_features)
+                              feats_np = feats.cpu().data.numpy()
+
+                              features.extend(feats_np)
+
+                                    #del instances
+                              #del instances
+                        features_np = np.reshape(features,(n_elems, net.fc_input_features))
+
+                        inputs = torch.tensor(features_np).float().to(device, non_blocking=True)
+                        
+                        logits_img, _ = net(None, inputs)
+
+                        sigmoid_output_img = F.sigmoid(logits_img)
+                        outputs_wsi_np_img = sigmoid_output_img.cpu().numpy()
+
+                        logging.info(f"pred_img: {outputs_wsi_np_img}")
+
+                        filenames_wsis.append(wsi_id)
+                        pred_scc.append(outputs_wsi_np_img[0])
+                        pred_nscc_adeno.append(outputs_wsi_np_img[1])
+                        pred_nscc_squamous.append(outputs_wsi_np_img[2])
+                        pred_normal.append(outputs_wsi_np_img[3])
+
+                        output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
+
+                        y_pred = np.append(y_pred, output_norm)
+                        y_true = np.append(y_true, labels_np)
+                        scores_pred= np.append(scores_pred, outputs_wsi_np_img)
+                        
+                        accuracy_train = accuracy_score(y_true, y_pred)
+                        logging.info(f"micro_accuracy train {accuracy_train}") 
+
+                  File = {'filenames': filenames_wsis,
+                  'pred_scc': pred_scc, 
+                  'pred_nscc_adeno': pred_nscc_adeno,
+                  'pred_nscc_squamous': pred_nscc_squamous, 
+                  'pred_normal': pred_normal}
+
+                  df_predictions = pd.DataFrame.from_dict(File)
+                  
+                  filename_train_predictions = Path(outputdir / f"train_predictions_{epoch + 1}.csv")
+                  df_predictions.to_csv(filename_train_predictions) 
+
+                  arange_like_predictions = np.arange(len(y_true))
+
+                  y_pred_reshape = y_pred.reshape(len(train_dataset), 4)
+                  y_true_reshape = y_true.reshape(len(train_dataset), 4)
+                  scores_pred_reshape = scores_pred.reshape(len(train_dataset), 4)
+
+                  confusion_matrix = multilabel_confusion_matrix(y_true_reshape, y_pred_reshape)
+
+                  plt.figure()
+                  disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix[0, :, :],
+                                                display_labels=[False, True])
+                  disp.plot()
+                  plt.title(f"Confusion Matrix ({names[0]})")
+                  plt.savefig(outputdir / f"train_{epoch + 1}_cm_{names[0]}.svg")
+                  plt.close()
+
+                  plt.figure()
+                  disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix[1, :, :],
+                                                display_labels=[False, True])
+                  disp.plot()
+                  plt.title(f"Confusion Matrix ({names[1]})")
+                  plt.savefig(outputdir / f"train_{epoch + 1}_cm_{names[1]}.svg")
+                  plt.close()
+
+                  plt.figure()
+                  disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix[2, :, :],
+                                                display_labels=[False, True])
+                  disp.plot()
+                  plt.title(f"Confusion Matrix ({names[2]})")
+                  plt.savefig(outputdir / f"train_{epoch + 1}_cm_{names[2]}.svg")
+                  plt.close()
+
+                  plt.figure()
+                  disp = ConfusionMatrixDisplay(confusion_matrix=confusion_matrix[3, :, :],
+                                                display_labels=[False, True])
+                  disp.plot()
+                  plt.title(f"Confusion Matrix ({names[3]})")
+                  plt.savefig(outputdir / f"train_{epoch + 1}_cm_{names[3]}.svg")
+                  plt.close()
+
+                  # Compute ROC curve and ROC area for each class
+                  fpr = dict()
+                  tpr = dict()
+                  precision = {}
+                  recall = {}
+                  avg_precision = {}
+                  roc_auc = dict()
+                  for i in range(4):
+                        fpr[i], tpr[i], _ = roc_curve(y_true[arange_like_predictions%4 == 0 + i],
+                                                      scores_pred[arange_like_predictions%4 == 0 + i])
+                        roc_auc[i] = auc(fpr[i], tpr[i])
+
+                        precision[i], recall[i], _ = precision_recall_curve(y_true[arange_like_predictions%4 == 0 + i],
+                                                                        scores_pred[arange_like_predictions%4 == 0 + i])
+                        avg_precision[i] = average_precision_score(y_true[arange_like_predictions%4 == 0 + i],
+                                                                  scores_pred[arange_like_predictions%4 == 0 + i])
+
+
+                        accuracy = accuracy_score(y_true[arange_like_predictions%4 == 0 + i],
+                                                y_pred[arange_like_predictions%4 == 0 + i])
+
+                        logging.info("== Final Metrics Train ==")
+                        logging.info(f"Accuracy {names[i]} = {accuracy:0.2f}")
+
+                        bma = balanced_accuracy_score(y_true[arange_like_predictions%4 == 0 + i],
+                                                      y_pred[arange_like_predictions%4 == 0 + i])
+                        kappa = cohen_kappa_score(y_true[arange_like_predictions%4 == 0 + i],
+                                                y_pred[arange_like_predictions%4 == 0 + i])
+                        logging.info(f"BMA {names[i]} = {bma:0.2f}")
+                        logging.info(f"Kappa {names[i]} = {kappa:0.2f}")
+
+                  # Compute micro-average ROC curve and ROC area
+                  fpr["micro"], tpr["micro"], _ = roc_curve(y_true, scores_pred)
+                  roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+                  
+                  precision["micro"], recall["micro"], _ = precision_recall_curve(y_true, scores_pred)
+                  avg_precision["micro"] = average_precision_score(y_true_reshape,
+                                                                  scores_pred_reshape,
+                                                                  average="micro")
+
+                  # Plot ROC curve
+                  custom_params = {"axes.spines.right": False, "axes.spines.top": False}
+                  sns.set_theme(style="whitegrid", rc=custom_params)
+                  plt.figure()
+                  plt.plot(fpr["micro"], tpr["micro"],
+                        label='micro-average ROC curve (AUC = {0:0.2f})'
+                              ''.format(roc_auc["micro"]))
+                  for i in range(4):
+                        plt.plot(fpr[i],
+                              tpr[i],
+                              label=f"ROC curve {names[i]} (AUC = {roc_auc[i]:0.2f})")
+
+                  plt.plot([0, 1], [0, 1], 'k--')
+                  plt.xlim([0.0, 1.0])
+                  plt.ylim([0.0, 1.05])
+                  plt.xlabel("False Positive Rate (Fpr)")
+                  plt.ylabel("True Positive Rate (Tpr)")
+                  plt.title("Train ROC Lung Cancer Multiclass")
+                  plt.legend(loc="lower right")
+                  plt.savefig(outputdir / f"train_{epoch + 1}_roc.svg")
+                  plt.close()
+
+
+                  sns.set_theme(style="white", rc=custom_params)
+                  plt.figure()
+                  f_scores = np.linspace(0.2, 0.8, num=4)
+                  for f_score in f_scores:
+                        x = np.linspace(0.01, 1)
+                        y = f_score * x / (2 * x - f_score)
+                        (l,) = plt.plot(x[y >= 0], y[y >= 0], color="gray", alpha=0.2)
+                        plt.annotate("f1={0:0.1f}".format(f_score), xy=(0.9, y[45] + 0.02))
+
+                  plt.plot(recall["micro"], precision["micro"],
+                        label='micro-average PR curve (AP = {0:0.2f})'
+                              ''.format(avg_precision["micro"]))
+                  for i in range(4):
+                        plt.plot(recall[i],
+                              precision[i],
+                              label=f"PR curve {names[i]} (AP = {avg_precision[i]:0.2f})")
+
+                  plt.plot([0, 1], [0, 1], 'k--')
+                  plt.xlim([0.0, 1.0])
+                  plt.ylim([0.0, 1.05])
+                  plt.xlabel("Recall")
+                  plt.ylabel("Precision")
+                  plt.title("Train PR curve Lung Cancer Multiclass")
+                  plt.legend(loc="lower left")
+                  plt.savefig(outputdir / f"train_{epoch + 1}_pr_curve.svg")
+                  plt.close()
+
+
+if __name__ == '__main__':
+    main()
