@@ -16,6 +16,9 @@ from sklearn.decomposition import PCA
 import seaborn as sns
 import time
 from utils import timer
+import umap
+import umap.plot
+
 
 thispath = Path(__file__).resolve()
 
@@ -25,7 +28,7 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
 # Load PyTorch model
-experiment_name = "MoCo_try_Adam"
+experiment_name = "MoCo_resnet101_scheduler_5"
 
 modeldir = Path(thispath.parent.parent / "trained_models" / "MoCo" / experiment_name)
 
@@ -34,7 +37,6 @@ cfg = yaml_load(modeldir / f"config_{experiment_name}.yml")
 model = ModelOption(cfg.model.model_name,
                 cfg.model.num_classes,
                 freeze=cfg.model.freeze_weights,
-                num_freezed_layers=cfg.model.num_frozen_layers,
                 dropout=cfg.model.dropout,
                 embedding_bool=cfg.model.embedding_bool
                 )    
@@ -44,8 +46,8 @@ moco_dim = cfg.training.moco_dim
 
 encoder = Encoder(model, dim=moco_dim).to(device)
 
-# checkpoint = torch.load(modeldir / cfg.dataset.magnification / cfg.model.model_name / f"{experiment_name}.pt")
-checkpoint = torch.load(modeldir / cfg.dataset.magnification / cfg.model.model_name / "MoCo.pt")
+checkpoint = torch.load(modeldir / cfg.dataset.magnification / cfg.model.model_name / f"{experiment_name}.pt")
+# checkpoint = torch.load(modeldir / cfg.dataset.magnification / cfg.model.model_name / "MoCo.pt")
 encoder.load_state_dict(checkpoint["encoder_state_dict"])
 loss = checkpoint["loss"]
 epoch = checkpoint["epoch"] + 1
@@ -68,6 +70,7 @@ for wsi_patches in tqdm(dataset_path, desc="Selecting patches to check model"):
     for instance in csv_instances:
         patches_names.append(str(instance).split("/")[-1])
 
+path_patches = path_patches[:4000]
 preprocess = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=cfg.dataset.mean, std=cfg.dataset.stddev),
@@ -75,7 +78,7 @@ preprocess = transforms.Compose([
         antialias=True)
     ])
 
-params_instance = {'batch_size': 1035,
+params_instance = {'batch_size': 128,
                    'shuffle': False,
                    'pin_memory': True,
                    'num_workers': 2}
@@ -91,25 +94,39 @@ with torch.no_grad():
     
     for i, (x_q, _) in tqdm(enumerate(generator)):
         x_q = x_q.to(device, non_blocking=True)
-
+        
         q = encoder(x_q)
         q = q.squeeze().cpu().numpy()
 
-        feature_matrix[i*1035:(i+1)*1035, :] = q
-        
+        if len(q) < params_instance["batch_size"]:
+            feature_matrix[len(path_patches)-len(q):len(path_patches), :] = q
+        else:
+            feature_matrix[i*len(q):(i+1)*len(q), :] = q
+            
+message = timer(start, time.time())
+print(f"Time to build feature matrix {message}")
+start = time.time()
 
 pca = PCA(n_components=20)
 pca_features = pca.fit_transform(feature_matrix)
 
 print(f"Explained variation per principal component: {pca.explained_variance_ratio_}")
 
-tsne = TSNE(perplexity=30, learning_rate='auto', init='pca', verbose=1)
-tsne_features = tsne.fit_transform(pca_features)
+# tsne = TSNE(perplexity=30, learning_rate='auto', init='pca', verbose=1)
+# tsne_features = tsne.fit_transform(pca_features)
 
-tsne_df = pd.DataFrame()
+# tsne_df = pd.DataFrame()
 
-tsne_df['x'] = tsne_features[:, 0]
-tsne_df['y'] = tsne_features[:, 1]
-sns.scatterplot(x='x', y='y', data=tsne_df)
+# tsne_df['x'] = tsne_features[:, 0]
+# tsne_df['y'] = tsne_features[:, 1]
+# sns.scatterplot(x='x', y='y', data=tsne_df)
 
-plt.savefig(datadir / "scaterplot.png")
+# plt.savefig(datadir / "scaterplot.png")
+plt.figure()
+mapper = umap.UMAP().fit(pca_features)
+umap.plot.points(mapper)
+plt.savefig(datadir / "uMap.png")
+
+
+message = timer(start, time.time())
+print(f"Time perform uMap {message}")

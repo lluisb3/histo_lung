@@ -18,6 +18,7 @@ class Encoder(torch.nn.Module):
         self.conv_layers = torch.nn.Sequential(*list(self.net.children())[:-1])
 
         if (torch.cuda.device_count()>1):
+            # 0 para GPU buena
             self.conv_layers = torch.nn.DataParallel(self.conv_layers, device_ids=[0])
 
         if self.model.embedding_bool:
@@ -35,6 +36,12 @@ class Encoder(torch.nn.Module):
                 self.K = self.num_classes
 
             elif ('resnet101' in self.model.model_name):
+                self.E = self.dim
+                self.L = self.E
+                self.D = 128
+                self.K = self.num_classes
+            
+            elif ('convnext' in self.model.model_name):
                 self.E = self.dim
                 self.L = self.E
                 self.D = 128

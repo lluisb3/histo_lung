@@ -100,3 +100,67 @@ class Dataset_bag_MIL(Dataset):
     def __getitem__(self, index):
         # Select sample
         return self.list_IDs[index], self.labels[index]
+
+
+class Balanced_Multimodal(torch.utils.data.sampler.Sampler):
+
+    def __init__(self, dataset, indices=None, num_samples=None, alpha = 0.5):
+
+        self.indices = list(range(len(dataset)))             if indices is None else indices
+
+        self.num_samples = len(self.indices)             if num_samples is None else num_samples
+
+        class_sample_count = [0,0,0,0]
+        
+        # labels = np.array(dataset[:,1])
+        class_sample_count = np.sum(dataset[:, 1:], axis=0)
+
+        min_class = np.argmin(class_sample_count)
+        class_sample_count = np.array(class_sample_count)
+        weights = []
+        for c in class_sample_count:
+            weights.append((c/class_sample_count[min_class]))
+
+        ratio = np.array(weights).astype(np.float)
+
+        label_to_count = {}
+        for idx in self.indices:
+            label = self._get_label(dataset, idx)
+            for l in label:
+                if l in label_to_count:
+                    label_to_count[l] += 1
+                else:
+                    label_to_count[l] = 1
+
+        weights = []
+
+        for idx in self.indices:
+            c = 0
+            for j, l in enumerate(self._get_label(dataset, idx)):
+                c = c+(1/label_to_count[l])#*ratio[l]
+
+            weights.append(c/(j+1))
+            #weights.append(c)
+			
+        self.weights_original = torch.DoubleTensor(weights)
+
+        self.weights_uniform = np.repeat(1/self.num_samples, self.num_samples)
+
+        #print(self.weights_a, self.weights_b)
+
+        beta = 1 - alpha
+        self.weights = (alpha * self.weights_original) + (beta * self.weights_uniform)
+
+
+    def _get_label(self, dataset, idx):
+        labels = np.where(dataset[idx, 1:]==1)[0]
+        #print(labels)
+        #labels = dataset[idx,2]
+        return labels
+
+    def __iter__(self):
+        return (self.indices[i] for i in torch.multinomial(
+            self.weights, self.num_samples, replacement=True))
+
+    def __len__(self):
+        return self.num_samples

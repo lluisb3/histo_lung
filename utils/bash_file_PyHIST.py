@@ -25,7 +25,7 @@ def bash_file(name_experiment):
 
     datadir = Path("/mnt/nas4/datasets/ToReadme/ExaMode_Dataset1/AOEC")
 
-    outputdir = Path(thispath.parent.parent / "data" / "Mask_PyHIST_v2" )
+    outputdir = Path("/mnt/nas6/data/AOEC/Lung/Mask_PyHIST_x20")
 
     svs_files = [i for i in datadir.rglob("*.svs") if "LungAOEC" in str(i)]
     labels = pd.read_csv(Path(thispath.parent.parent / "data" / "lung_data" / "he_images.csv"))
@@ -37,41 +37,31 @@ def bash_file(name_experiment):
             if file.stem in name:
                 he_svs_files.append(file)
 
-
     with open(
             Path(thispath.parent.parent / Path(
                 f"bash_files/bash_{name_experiment}.sh")), 'w') as f:
         f.write(
             f"#!/bin/bash \n\n" 
         )
-        
+
         for file in tqdm(he_svs_files):
-            try:
-                slide = openslide.OpenSlide(str(file))
-                mpp = slide.properties["openslide.mpp-x"]
 
-                level_downsamples = slide.level_downsamples
-                mags = available_magnifications(mpp, level_downsamples)
-                if mags[0] == 40:
-                    downsample = 4
-                elif mags[0] == 20:
-                    downsample = 2
-                
-                bash_line = f"python3 pyhist.py --method graph --mask-downsample 8 --output-downsample {downsample} " \
-                            f"--tilecross-downsample 32 --corners 1111 --borders 0000 --percentage-bc 1 " \
-                            f"--k-const 1000 --minimum_segmentsize 1000 --info 'verbose' --content-threshold 0.2 " \
-                            f"--patch-size 256 --save-patches --save-mask --save-tilecrossed-image " \
-                            f"--output {outputdir}/{file.parent.stem}/ {file}\n"
-                f.write(bash_line)
+            slide = openslide.OpenSlide(str(file))
+            mpp = slide.properties["openslide.mpp-x"]
 
-            except:
-                print(f"openslide cannot open: f{file}")
-                bash_line = f'python pyhist.py --content-threshold 0.7 --patch-size 224 --output-downsample 2' \
-                            f'--mask-downsample 16 --info "verbose" --output {outputdir}/{file.parent.stem}/ ' \
-                            f'--save-patches --save-mask --save-tilecrossed-image {file}\n'
-
-                f.write(bash_line)
-
+            level_downsamples = slide.level_downsamples
+            mags = available_magnifications(mpp, level_downsamples)
+            if mags[0] == 40:
+                downsample = 2
+            elif mags[0] == 20:
+                downsample = 1
+            
+            bash_line = f"python3 pyhist.py --method graph --mask-downsample 16 --output-downsample {downsample} " \
+                        f"--tilecross-downsample 32 --corners 1111 --borders 0000 --percentage-bc 1 " \
+                        f"--k-const 1000 --minimum_segmentsize 1000 --info 'verbose' --content-threshold 0.2 " \
+                        f"--patch-size 256 --save-patches --save-mask --save-tilecrossed-image " \
+                        f"--output {outputdir}/{file.parent.stem}/ {file}\n"
+            f.write(bash_line)
 
 
 @click.command()

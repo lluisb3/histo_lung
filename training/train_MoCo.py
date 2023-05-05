@@ -8,7 +8,7 @@ from tqdm import tqdm
 import click
 from natsort import natsorted
 import torch
-from database import Dataset_instance, Dataset_bag
+from database import Dataset_instance
 from torch.utils.data import DataLoader
 import albumentations as A
 from torchvision import transforms
@@ -32,7 +32,7 @@ def train(encoder, momentum_encoder, optimizer, scheduler, transform, preprocess
     start_time = time.time()
     
     pyhistdir = Path(datadir / "Mask_PyHIST_v2")
-    dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
+    dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths_v2.csv")])
 
     number_patches = 0
     path_patches = []
@@ -51,15 +51,20 @@ def train(encoder, momentum_encoder, optimizer, scheduler, transform, preprocess
     num_workers = cfg.dataloader.num_workers
     shuffle_bn = True
 
-    if cfg['training']['resume_training']:
-        checkpoint = torch.load(chkpt_path)
+    if cfg.training.resume_training:
+        chkptdir = Path(thispath.parent.parent /
+                "trained_models" /
+                "MoCo" /
+                cfg.dataset.magnification /
+                cfg.model.model_name /
+                f"{cfg.experiment_name}_temporary.pt")
+        checkpoint = torch.load(chkptdir)
         encoder.load_state_dict(checkpoint['encoder_state_dict'])
         momentum_encoder.load_state_dict(checkpoint['m_encoder_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         epoch = checkpoint['epoch']
-        best_loss = 
-        loss = 
+        best_loss = checkpoint['loss']
     else:
         epoch = 0 
         best_loss = 100000.0
@@ -68,9 +73,6 @@ def train(encoder, momentum_encoder, optimizer, scheduler, transform, preprocess
     early_stop = cfg.training.early_stop
     early_stop_cont = 0
 
-    
-
-    # tot_iterations = cfg.training.epochs * iterations_per_epoch
     cont_iterations_tot = 0
     
     # Save gradients and parameters of the model
@@ -504,6 +506,7 @@ def main(config_file):
 
     # Close wandb run 
     wandb.finish()
+
 
 if __name__ == '__main__':
     main()

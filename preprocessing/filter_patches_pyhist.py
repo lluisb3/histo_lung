@@ -60,7 +60,7 @@ def filter_patches(list_dirs, maskdir):
             
             total_pixels_in_range = np.sum(histo)
             
-            if (total_pixels_in_range > 0.6 * total_pixels_patch):
+            if (total_pixels_in_range > 0.5 * total_pixels_patch):
                 name = image_patch.stem
                 names.append(name)
                 all_row.append(patches_metadata.loc[name]['Row'])
@@ -68,7 +68,7 @@ def filter_patches(list_dirs, maskdir):
                 filtered_patches.append(image_patch)
             
         # Create .csv with metadata information of the filtered patches
-        outputdir_metadata = Path(filename / f"{filename.stem}_densely_filtered_metadata.csv")
+        outputdir_metadata = Path(filename / f"{filename.stem}_densely_filtered_metadata_v2.csv")
         
         file_metadata = {'patch_name':names,'row':all_row,'column':all_col}
         df_metadata = pd.DataFrame.from_dict(file_metadata)
@@ -76,7 +76,7 @@ def filter_patches(list_dirs, maskdir):
         df_metadata.to_csv(outputdir_metadata, index=False)
 
         # Create .csv with filtered parches path
-        outputdir_paths = Path(filename / f"{filename.stem}_densely_filtered_paths.csv")
+        outputdir_paths = Path(filename / f"{filename.stem}_densely_filtered_paths_v2.csv")
         file_path = {'filtered_patch_path': filtered_patches}
         df_paths = pd.DataFrame.from_dict(file_path)
         df_paths.sort_values(by='filtered_patch_path', axis=0, ascending=True, inplace=True)

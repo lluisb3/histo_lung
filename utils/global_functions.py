@@ -2,6 +2,18 @@ import csv
 import numpy as np
 
 
+def create_folds(seq, k):
+    avg = len(seq) / float(k)
+    out = []
+    last = 0.0
+
+    while last < len(seq):
+        out.append(seq[int(last):int(last + avg)])
+        last += avg
+
+    return out
+
+
 def timer(start, end):
     hours, rem = divmod(end-start, 3600)
     minutes, seconds = divmod(rem, 60)

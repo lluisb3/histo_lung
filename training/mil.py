@@ -15,6 +15,7 @@ class MIL_model(torch.nn.Module):
         self.conv_layers = torch.nn.Sequential(*list(self.net.children())[:-1])
 
         if (torch.cuda.device_count()>1):
+            # 0 para GPU buena
             self.conv_layers = torch.nn.DataParallel(self.conv_layers, device_ids=[0])
 
 
@@ -30,6 +31,11 @@ class MIL_model(torch.nn.Module):
                 self.L = self.E
                 self.D = self.hidden_space_len
                 self.K = self.num_classes
+            elif ('convnext' in self.model.model_name):
+                self.E = self.hidden_space_len
+                self.L = self.E
+                self.D = self.hidden_space_len
+                self.K = self.num_classes
 
             self.embedding = torch.nn.Linear(in_features=self.fc_input_features, out_features=self.E)
             self.post_embedding = torch.nn.Linear(in_features=self.E, out_features=self.E)
@@ -40,8 +46,12 @@ class MIL_model(torch.nn.Module):
             if ('resnet34' in self.model.model_name):
                 self.L = self.fc_input_features
                 self.D = self.hidden_space_len
-                self.K = self.N_CLAS                
+                self.K = self.num_classes               
             elif ('resnet101' in self.model.model_name):
+                self.L = self.E
+                self.D = self.hidden_space_len
+                self.K = self.num_classes
+            elif ('convnext' in self.model.model_name):
                 self.L = self.E
                 self.D = self.hidden_space_len
                 self.K = self.num_classes
@@ -52,26 +62,29 @@ class MIL_model(torch.nn.Module):
                 torch.nn.Tanh(),
                 torch.nn.Linear(self.D, self.K)
             )
+
+            # self.attention_channel = torch.nn.Sequential(torch.nn.Linear(self.L, self.D),
+            #                                     torch.nn.Tanh(),
+            #                                     torch.nn.Linear(self.D, 1))
+            # self.embedding_before_fc = torch.nn.Linear(self.E, self.E)
+
             self.embedding_before_fc = torch.nn.Linear(self.E * self.K, self.E)
 
         self.embedding_fc = torch.nn.Linear(self.E, self.K)
 
-        self.dropout = torch.nn.Dropout(p=0.2)
-        self.tanh = torch.nn.Tanh()
+        self.dropout = torch.nn.Dropout(p=self.model.dropout)
+        # self.tanh = torch.nn.Tanh()
         self.relu = torch.nn.ReLU()
 
         self.LayerNorm = torch.nn.LayerNorm(self.E * self.K, eps=1e-5)
-        self.activation = self.tanh
-        #self.activation = self.relu 
+        # self.activation = self.tanh
+        self.activation = self.relu 
 
     def forward(self, x, conv_layers_out):
 
         #if used attention pooling
         A = None
         #m = torch.nn.Softmax(dim=1)
-        m_binary = torch.nn.Sigmoid()
-        m_multiclass = torch.nn.Softmax()
-        dropout = torch.nn.Dropout(p=0.2)
 
         if x is not None:
             #print(x.shape)
@@ -79,16 +92,6 @@ class MIL_model(torch.nn.Module):
             #print(x.shape)
 
             conv_layers_out = conv_layers_out.view(-1, self.fc_input_features)
-
-        n_patches = conv_layers_out.shape[0]
-
-        #dk = max(1,np.log10(n_patches))
-        #dk = max(1,np.log10(self.D))
-        dk = 1
-
-        if ('mobilenet' in self.model.model_name):
-            conv_layers_out = self.dropout(conv_layers_out)
-
 
         if self.model.embedding_bool:
             embedding_layer = self.embedding(conv_layers_out)
@@ -110,15 +113,25 @@ class MIL_model(torch.nn.Module):
         #print("A ante soft: " + str(A))
         A = F.softmax(A, dim=1)
 
-        cls_img = torch.mm(A, features_to_return)
-        cls_img = cls_img.view(-1, self.E * self.K)
+        wsi_embedding = torch.mm(A, features_to_return)
 
-        #cls_img = self.dropout(cls_img)
+        # attention_channel = self.attention_channel(wsi_embedding)
 
-        cls_img = self.embedding_before_fc(cls_img)
+        # attention_channel = torch.transpose(attention_channel, 1, 0)
+
+        # attention_channel = F.softmax(attention_channel, dim=1)
+
+        # cls_img = torch.mm(attention_channel, wsi_embedding)
+
+        # cls_img = self.embedding_before_fc(cls_img)
+
+        wsi_embedding = wsi_embedding.view(-1, self.E * self.K)
+
+        cls_img = self.embedding_before_fc(wsi_embedding)
 
         cls_img = self.activation(cls_img)
-        feature_img = cls_img
+
+        features_image = cls_img
 
         cls_img = self.dropout(cls_img)
 
@@ -126,4 +139,4 @@ class MIL_model(torch.nn.Module):
 
         Y_prob = torch.squeeze(Y_prob)
 
-        return Y_prob, feature_img	
+        return Y_prob, features_image
