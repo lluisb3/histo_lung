@@ -31,6 +31,7 @@ class MIL_model(torch.nn.Module):
                 self.L = self.E
                 self.D = self.hidden_space_len
                 self.K = self.num_classes
+
             elif ('convnext' in self.model.model_name):
                 self.E = self.hidden_space_len
                 self.L = self.E
@@ -46,11 +47,13 @@ class MIL_model(torch.nn.Module):
             if ('resnet34' in self.model.model_name):
                 self.L = self.fc_input_features
                 self.D = self.hidden_space_len
-                self.K = self.num_classes               
+                self.K = self.num_classes   
+            
             elif ('resnet101' in self.model.model_name):
                 self.L = self.E
                 self.D = self.hidden_space_len
                 self.K = self.num_classes
+
             elif ('convnext' in self.model.model_name):
                 self.L = self.E
                 self.D = self.hidden_space_len

@@ -164,14 +164,22 @@ def generate_transformer(prob = 0.5):
     return pipeline_transform
 
 
+# def validation_1_epoch(cfg,
+#                        net,
+#                        criterion,
+#                        generator,
+#                        patches_validation,
+#                        preprocess,
+#                        iterations,
+#                        epoch):
+
 def validation_1_epoch(cfg,
                        net,
                        criterion,
                        generator,
-                       patches_validation,
-                       preprocess,
                        iterations,
-                       epoch):
+                       epoch,
+                       featuresdir):
     
     logging.info("== Validation ==")
 
@@ -207,27 +215,29 @@ def validation_1_epoch(cfg,
 
             labels_local = labels.float().flatten().to(device, non_blocking=True)
 
-            validation_generator_instance = get_generator_instances(patches_validation[wsi_id], 
-                                                                    preprocess,
-                                                                    cfg.dataloader.batch_size, 
-                                                                    None,
-                                                                    cfg.dataloader.num_workers) 
+            features_np = np.load(datadir / "Saved_features" / featuresdir / f"{wsi_id}.npy")
 
-            n_elems = len(patches_validation[wsi_id])   
+            # validation_generator_instance = get_generator_instances(patches_validation[wsi_id], 
+            #                                                         preprocess,
+            #                                                         cfg.dataloader.batch_size, 
+            #                                                         None,
+            #                                                         cfg.dataloader.num_workers) 
 
-            features = []
+            # n_elems = len(patches_validation[wsi_id])   
+
+            # features = []
             
-            for instances in validation_generator_instance:
-                instances = instances.to(device, non_blocking=True)
+            # for instances in validation_generator_instance:
+            #     instances = instances.to(device, non_blocking=True)
 
-                # forward + backward + optimize
-                feats = net.conv_layers(instances)
-                feats = feats.view(-1, net.fc_input_features)
-                feats_np = feats.cpu().data.numpy()
+            #     # forward + backward + optimize
+            #     feats = net.conv_layers(instances)
+            #     feats = feats.view(-1, net.fc_input_features)
+            #     feats_np = feats.cpu().data.numpy()
 
-                features.extend(feats_np)
+            #     features.extend(feats_np)
 
-            features_np = np.reshape(features,(n_elems, net.fc_input_features))
+            # features_np = np.reshape(features,(n_elems, net.fc_input_features))
 
             inputs = torch.tensor(features_np).float().to(device, non_blocking=True)
         
@@ -285,7 +295,8 @@ def train_1_epoch(cfg,
                   preprocess, 
                   iterations, 
                   epoch,
-                  cont_iterations_tot):
+                  cont_iterations_tot,
+                  data_augmentation):
 
     logging.info("== Training ==")
 
@@ -338,30 +349,34 @@ def train_1_epoch(cfg,
         #pipeline_transform = generate_transformer(labels_np[i_wsi])
         pipeline_transform = generate_transformer()
 
-        training_generator_instance = get_generator_instances(patches_train[wsi_id], 
-                                                              preprocess,
-                                                              cfg.dataloader.batch_size, 
-                                                              pipeline_transform,
-                                                              cfg.dataloader.num_workers) 
-        
-        n_elems = len(patches_train[wsi_id])                                            
-        net.eval()
+        if data_augmentation:
+            
+            training_generator_instance = get_generator_instances(patches_train[wsi_id], 
+                                                                preprocess,
+                                                                cfg.dataloader.batch_size, 
+                                                                pipeline_transform,
+                                                                cfg.dataloader.num_workers) 
+            
+            n_elems = len(patches_train[wsi_id])                                            
+            net.eval()
 
-        features = []
-        with torch.no_grad():
-            for instances in training_generator_instance:
-                instances = instances.to(device, non_blocking=True)
+            features = []
+            with torch.no_grad():
+                for instances in training_generator_instance:
+                    instances = instances.to(device, non_blocking=True)
 
-                # forward + backward + optimize
-                feats = net.conv_layers(instances)
-                feats = feats.view(-1, net.fc_input_features)
-                feats_np = feats.cpu().numpy()
+                    # forward + backward + optimize
+                    feats = net.conv_layers(instances)
+                    feats = feats.view(-1, net.fc_input_features)
+                    feats_np = feats.cpu().numpy()
 
-                features.extend(feats_np)
+                    features.extend(feats_np)
 
-                #del instances
-            #del instances
-        features_np = np.reshape(features,(n_elems, net.fc_input_features))
+            features_np = np.reshape(features,(n_elems, net.fc_input_features))
+
+        else:
+            features_np = np.load(datadir / "Saved_features" / cfg.data_augmentation.featuresdir /
+                                  f"{wsi_id}.npy")
 
         net.train()
         net.zero_grad(set_to_none=True)
@@ -486,18 +501,20 @@ def train(cfg,
         start_time_epoch = time.time()
 
         # Training
+        
         y_true_tr, scores_tr, train_loss, accuracy_train, df_train = train_1_epoch(
-                                                                           cfg,
-                                                                           net,
-                                                                           criterion,
-                                                                           optimizer,
-                                                                           scheduler,
-                                                                           training_generator_bag,
-                                                                           patches_train,
-                                                                           preprocess,
-                                                                           iterations_train,
-                                                                           epoch,
-                                                                           cont_iterations_tot)
+                                                                      cfg,
+                                                                      net,
+                                                                      criterion,
+                                                                      optimizer,
+                                                                      scheduler,
+                                                                      training_generator_bag,
+                                                                      patches_train,
+                                                                      preprocess,
+                                                                      iterations_train,
+                                                                      epoch,
+                                                                      cont_iterations_tot,
+                                                                      cfg.data_augmentation.boolean)
         #save_training predictions
         filename_training_predictions = Path(outputdir / f"training_predictions_{epoch + 1}.csv")
         df_train.to_csv(filename_training_predictions)
@@ -612,14 +629,13 @@ def train(cfg,
 
         # Validation
         y_true_vd, scores_vd, valid_loss, accuracy_valid, df_valid = validation_1_epoch(
-                                                                           cfg,
-                                                                           net,
-                                                                           criterion,
-                                                                           validation_generator_bag,
-                                                                           patches_validation,
-                                                                           preprocess,
-                                                                           iterations_valid,
-                                                                           epoch)
+                                                                  cfg,
+                                                                  net,
+                                                                  criterion,
+                                                                  validation_generator_bag,
+                                                                  iterations_valid,
+                                                                  epoch,
+                                                                  cfg.data_augmentation.featuresdir)
         
         # Save validation predictions
         filename_validation_predictions = Path(outputdir / f"validation_predictions_{epoch + 1}.csv")

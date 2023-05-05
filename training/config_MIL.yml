@@ -20,6 +20,8 @@ dataloader:
     num_workers: 6
 
 data_augmentation:
+    boolean: False
+    featuresdir: Features_convnext_NoChannel
     prob: 0.5
 
 training:
