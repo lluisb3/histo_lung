@@ -1,4 +1,4 @@
-experiment_name: MIL_convnext
+experiment_name: MIL_convnext_001_weights_feat_01_NoAChannel
 model:
     model_name: "convnext"
     num_classes: 4
@@ -33,10 +33,10 @@ training:
     early_stop: 20
     criterion: BCEWithLogitsLoss
     criterion_args:
-        weights: 
+        weights: [0.824, 0.477, 0.809, 0.742]
     optimizer: "Adam"
     optimizer_args:
-        lr: 0.0001
+        lr: 0.001
         betas:
         - 0.9
         - 0.999
@@ -49,7 +49,7 @@ training:
     #     weight_decay: 1e-4
     lr_scheduler: 'MultiStepLR'
     lr_scheduler_args:
-        milestones: [51, 51]
+        milestones: [3, 5, 10, 25]
         gamma: 0.5
     best_metric: 'accuracy'
     resume_training: False

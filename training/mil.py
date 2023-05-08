@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 class MIL_model(torch.nn.Module):
-    def __init__(self, model, hidden_space_len):
+    def __init__(self, model, hidden_space_len, cfg):
 
         super(MIL_model, self).__init__()
 		
@@ -11,6 +11,7 @@ class MIL_model(torch.nn.Module):
         self.num_classes = self.model.num_classes
         self.hidden_space_len = hidden_space_len
         self.net = self.model.net
+        self.cfg = cfg
 
         self.conv_layers = torch.nn.Sequential(*list(self.net.children())[:-1])
 
@@ -66,12 +67,18 @@ class MIL_model(torch.nn.Module):
                 torch.nn.Linear(self.D, self.K)
             )
 
-            # self.attention_channel = torch.nn.Sequential(torch.nn.Linear(self.L, self.D),
-            #                                     torch.nn.Tanh(),
-            #                                     torch.nn.Linear(self.D, 1))
-            # self.embedding_before_fc = torch.nn.Linear(self.E, self.E)
+            if "NoChannel" in self.cfg.data_augmentation.featuresdir:
+                print("== Attention No Channel ==")
+                self.embedding_before_fc = torch.nn.Linear(self.E * self.K, self.E)
 
-            self.embedding_before_fc = torch.nn.Linear(self.E * self.K, self.E)
+            elif "AChannel" in self.cfg.data_augmentation.featuresdir:
+                print("== Attention with A Channel for multilabel ==")
+                self.attention_channel = torch.nn.Sequential(torch.nn.Linear(self.L, self.D),
+                                                    torch.nn.Tanh(),
+                                                    torch.nn.Linear(self.D, 1))
+                self.embedding_before_fc = torch.nn.Linear(self.E, self.E)
+
+            
 
         self.embedding_fc = torch.nn.Linear(self.E, self.K)
 
@@ -118,19 +125,23 @@ class MIL_model(torch.nn.Module):
 
         wsi_embedding = torch.mm(A, features_to_return)
 
-        # attention_channel = self.attention_channel(wsi_embedding)
+        if "NoChannel" in self.cfg.data_augmentation.featuresdir:
+            print("== Attention No Channel ==")
+            wsi_embedding = wsi_embedding.view(-1, self.E * self.K)
 
-        # attention_channel = torch.transpose(attention_channel, 1, 0)
+            cls_img = self.embedding_before_fc(wsi_embedding)
 
-        # attention_channel = F.softmax(attention_channel, dim=1)
+        elif "AChannel" in self.cfg.data_augmentation.featuresdir:
+            print("== Attention with A Channel for multilabel ==")
+            attention_channel = self.attention_channel(wsi_embedding)
 
-        # cls_img = torch.mm(attention_channel, wsi_embedding)
+            attention_channel = torch.transpose(attention_channel, 1, 0)
 
-        # cls_img = self.embedding_before_fc(cls_img)
+            attention_channel = F.softmax(attention_channel, dim=1)
 
-        wsi_embedding = wsi_embedding.view(-1, self.E * self.K)
+            cls_img = torch.mm(attention_channel, wsi_embedding)
 
-        cls_img = self.embedding_before_fc(wsi_embedding)
+            # cls_img = self.embedding_before_fc(cls_img)
 
         cls_img = self.activation(cls_img)
 
