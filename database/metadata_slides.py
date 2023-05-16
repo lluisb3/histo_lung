@@ -12,10 +12,10 @@ thispath = Path(__file__).resolve()
 
 
 def metadata_slides_csv():
-    datadir = Path("/mnt/nas4/datasets/ToReadme/ExaMode_Dataset1/AOEC")
-    maskdir = Path(thispath.parent.parent / "data" / "Mask_PyHIST_v2")
+    datadir = Path("/mnt/nas6/data/cptac")
+    maskdir = Path(datadir / "Mask_PyHIST")
 
-    svs_files = natsorted([i for i in datadir.rglob("*.svs") if "LungAOEC" in str(i)], key=str)
+    svs_files = natsorted([i for i in datadir.rglob("*.svs")], key=str)
 
     subdirs = natsorted([e for e in maskdir.iterdir() if e.is_dir()])
     list_dirs = []
@@ -73,7 +73,7 @@ def metadata_slides_csv():
         # mean_thumb_data = np.mean(thumb_data_masked, axis=(0, 1))
         # std_thumb_data = np.std(thumb_data_masked, axis=(0, 1))
 
-        df_csv = pd.read_csv(Path(resultdir / f"{svs_file.stem}_densely_filtered_metadata_v2.csv"))
+        df_csv = pd.read_csv(Path(resultdir / f"{svs_file.stem}_densely_filtered_metadata.csv"))
         filtered_patches = df_csv["patch_name"].count()
 
         # metadata.loc[svs_file.stem] = [level_dimensions, level_downsamples, mags,
@@ -85,7 +85,7 @@ def metadata_slides_csv():
                                 patch_shape, center]
 
     metadata.sort_index(axis=0, ascending=True, inplace=True)
-    metadata.to_csv(Path(maskdir / "metadata_slides_v2.csv"))
+    metadata.to_csv(Path(maskdir / "metadata_slides.csv"))
     print(f"metadata_slides.csv created in {maskdir}")
 
 

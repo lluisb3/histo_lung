@@ -8,7 +8,7 @@ import time
 from tqdm import tqdm
 import torch.nn.functional as F
 import torch.utils.data
-from torch.optim import Adam
+from torch.optim import Adam, SGD
 from torchvision import transforms
 from sklearn.metrics import roc_curve, auc, accuracy_score, precision_recall_curve, average_precision_score, f1_score
 import matplotlib.pyplot as plt
@@ -821,7 +821,7 @@ def train(cfg,
 @click.command()
 @click.option(
     "--config_file",
-    default="config_MIL",
+    default="MIL",
     prompt="Name of the config file without extension",
     help="Name of the config file without extension",
 )
@@ -899,7 +899,11 @@ def main(config_file, exp_name_moco):
     # Discard WSI with less than 10 patches
     pyhistdir = Path(datadir / "Mask_PyHIST_v2") 
 
-    metadata_dataset = pd.read_csv(pyhistdir / "metadata_slides.csv", index_col=0,
+    if "v2" in exp_name_moco:
+        metadata_dataset = pd.read_csv(pyhistdir / "metadata_slides_v2.csv", index_col=0,
+                                   dtype={"ID wsi": str})
+    else:
+        metadata_dataset = pd.read_csv(pyhistdir / "metadata_slides.csv", index_col=0,
                                    dtype={"ID wsi": str})
 
     discard_wsi_dataset = []
@@ -925,8 +929,14 @@ def main(config_file, exp_name_moco):
         i+=1
 
     # Load patches path
-    dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv") 
-                              if "LungAOEC" in str(i)])
+    if "v2" in exp_name_moco:
+        logging.info("== Version 2 filter patches ==")
+        dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths_v2.csv") 
+                                if "LungAOEC" in str(i)])
+    else:
+        logging.info("== Version 1 filter patches ==")
+        dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv") 
+                                if "LungAOEC" in str(i)])
 
     patches_path = {}
     for wsi_patches_path in tqdm(dataset_path, desc="Selecting patches: "):
@@ -1056,25 +1066,12 @@ def main(config_file, exp_name_moco):
     eps = param_optimizer_cfg.eps
     amsgrad = param_optimizer_cfg.amsgrad
 
-    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight",'prelu']
-    emb_par = ["img_embeddings_encoder.weight", "embedding_fc.weight"]
-
-    param_optimizer_CNN = list(net.named_parameters())
-    no_decay = ["prelu", "bias", "LayerNorm.bias", "LayerNorm.weight"]
-    optimizer_grouped_parameters_CNN = [
-    	{"params": [p for n, p in param_optimizer_CNN if not any(nd in n for nd in no_decay) and not any(nd in n for nd in emb_par)], "weight_decay": wt_decay},
-    	{"params": [p for n, p in param_optimizer_CNN if any(nd in n for nd in no_decay) and not any(nd in n for nd in emb_par)], "weight_decay": 0.0,},
-    	{"params": [p for n, p in param_optimizer_CNN if any(nd in n for nd in emb_par)], "weight_decay": wt_decay, 'lr': lr},
-    ]
-
-    #optimizer_CNN = optim.Adam(model.parameters(),lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=wt_decay, amsgrad=True)
-    optimizer = Adam(optimizer_grouped_parameters_CNN, 
-                     lr=lr, 
-                     betas=betas, 
-                     eps=eps, 
-                     weight_decay=wt_decay, 
-                     amsgrad=amsgrad)
-    # optimizer_CNN = AdamW(optimizer_grouped_parameters_CNN,lr = lr,eps=1e-8)
+    if cfg.training.optimizer == "Adam":
+        optimizer = Adam(net.parameters(), lr=lr, betas=betas, eps=eps, weight_decay=wt_decay, amsgrad=amsgrad)
+    elif cfg.training.optimizer == "AdamW":
+        optimizer = AdamW(net.parameters(),lr=lr, betas=betas, eps=eps, weight_decay=wt_decay, amsgrad=amsgrad)
+    elif cfg.training.optimizer == "SGD":
+        optimizer = SGD(net.parameters(),lr=lr, momentum=0.9, weight_decay=wt_decay)
 
     scheduler = getattr(torch.optim.lr_scheduler, cfg.training.lr_scheduler)
     scheduler = scheduler(optimizer, **cfg.training.lr_scheduler_args)

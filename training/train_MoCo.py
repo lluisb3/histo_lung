@@ -134,7 +134,7 @@ def train(encoder, momentum_encoder, optimizer, scheduler, transform, preprocess
 
         j = 0
 
-        for a, (x_q, x_k) in enumerate(generator):
+        for a, (x_k, x_q) in enumerate(generator):
         
             # p = float(cont_iterations_tot + epoch * tot_iterations) / training_arguments["epochs"] / tot_iterations
 

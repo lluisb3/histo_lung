@@ -17,10 +17,10 @@ def data_splits(k):
         Number of folds
     """
 
-    datadir = Path(thispath.parent / "data")
+    datadir = Path(thispath.parent.parent / "data")
 
     csv_ids = Path(datadir / "patients_ID.csv")
-    csv_dataset_AOEC = Path(datadir / "labels.csv")
+    csv_dataset_AOEC = Path(datadir / "manual_labels.csv")
 
     # read data
     dataset_AOEC = pd.read_csv(csv_dataset_AOEC,
@@ -72,7 +72,7 @@ def data_splits(k):
 @click.command()
 @click.option(
     "--k",
-    default=10,
+    default=5,
     prompt="Number of splits (k)",
     help="Specify number of splits to perform k-fold-crossvalidation",
 )

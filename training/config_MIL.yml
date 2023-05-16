@@ -1,4 +1,4 @@
-experiment_name: MIL_res101_weights_cosine
+experiment_name: f_MIL_res101_weights_cosine
 model:
     model_name: "resnet101"
     num_classes: 4
@@ -21,7 +21,7 @@ dataloader:
 
 data_augmentation:
     boolean: False
-    featuresdir: Features_convnext_NoChannel
+    featuresdir: Features_resnet101_NoChannel
     prob: 0.5
 
 training:
@@ -53,4 +53,4 @@ wandb:
   enable: True
   project: "histo_lung"
   username: "lluisb3"
-  group: "MIL"
+  group: "MIL_feat"

@@ -36,6 +36,13 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     help="Name of the MoCo experiment",
 )
 def main(config_file, exp_name_moco):
+	# Seed for reproducibility
+	seed = 33
+	torch.manual_seed(seed)
+	if torch.cuda.is_available():
+		torch.cuda.manual_seed_all(seed)
+	np.random.seed(seed)
+	
 	# Read the configuration file
 	configdir = Path(thispath.parent / f"{config_file}.yml")
 	cfg = yaml_load(configdir)

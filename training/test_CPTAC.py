@@ -23,7 +23,9 @@ import click
 
 thispath = Path(__file__).resolve()
 
-device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+datadir = Path(thispath.parent.parent / "data")
 
 
 @click.command()
@@ -78,7 +80,7 @@ def main(experiment_name):
 
       hidden_space_len = cfg.model.hidden_space_len
 
-      net = MIL_model(model, hidden_space_len)
+      net = MIL_model(model, hidden_space_len, cfg)
 
       net.load_state_dict(checkpoint["model_state_dict"], strict=False)
       net.to(device)
@@ -86,21 +88,21 @@ def main(experiment_name):
 
       # Discard WSI with less than 10 patches
       pyhistdir = Path(testdir / "Mask_PyHIST")
-      # metadata_test = pd.read_csv(testdir / "metadata_slides.csv", index_col=0)
+      metadata_test = pd.read_csv(pyhistdir / "metadata_slides.csv", index_col=0)
 
-      # discard_wsi_test = []
-      # if (metadata_test['number_filtered_patches'] < 10).any():
-      #       for index, row in metadata_test.iterrows():
-      #             if row['number_filtered_patches'] < 10:
-      #                   discard_wsi_test.append(index)
+      discard_wsi_test = []
+      if (metadata_test['number_filtered_patches'] < 10).any():
+            for index, row in metadata_test.iterrows():
+                  if row['number_filtered_patches'] < 10:
+                        discard_wsi_test.append(index)
 
-      #       logging.info(f"There is {len(discard_wsi_test)} WSI discarded in test, <10 patches")
-      #       logging.info(discard_wsi_test)
+            logging.info(f"There is {len(discard_wsi_test)} WSI discarded in test, <10 patches")
+            logging.info(discard_wsi_test)
 
       # Load Test Dataset and Labels
       test_csv = pd.read_csv(Path(testdir / f"labels_cptac.csv"), index_col=0)
       test_csv.index = test_csv.index.str.replace("/", '-')
-      # test_csv.drop(discard_wsi_test, inplace=True)
+      test_csv.drop(discard_wsi_test, inplace=True)
 
       test_dataset = test_csv.index
       test_labels = test_csv.values
@@ -116,8 +118,8 @@ def main(experiment_name):
             name = f"{wsi_patches_path.parent.stem}"
             patches_test[name] = csv_patch_path
 
-      # for discard_wsi in discard_wsi_test:
-      #       patches_test.pop(discard_wsi, None)
+      for discard_wsi in discard_wsi_test:
+            patches_test.pop(discard_wsi, None)
 
       logging.info(f"Total number of WSI for test {len(patches_test)}")
       logging.info("")
@@ -168,37 +170,40 @@ def main(experiment_name):
                   
                   labels_np = labels.cpu().numpy().flatten()
 
-                  test_generator_instance = get_generator_instances(patches_test[wsi_id], 
-                                                                  preprocess,
-                                                                  cfg.dataloader.batch_size, 
-                                                                  None,
-                                                                  cfg.dataloader.num_workers) 
+                  # test_generator_instance = get_generator_instances(patches_test[wsi_id], 
+                  #                                                 preprocess,
+                  #                                                 cfg.dataloader.batch_size, 
+                  #                                                 None,
+                  #                                                 cfg.dataloader.num_workers) 
 
-                  n_elems = len(patches_test[wsi_id])   
+                  # n_elems = len(patches_test[wsi_id])   
 
-                  features = []
+                  # features = []
                   
-                  for instances in test_generator_instance:
-                        instances = instances.to(device, non_blocking=True)
+                  # for instances in test_generator_instance:
+                  #       instances = instances.to(device, non_blocking=True)
 
-                        # forward + backward + optimize
-                        feats = net.conv_layers(instances)
-                        feats = feats.view(-1, net.fc_input_features)
-                        feats_np = feats.cpu().data.numpy()
+                  #       # forward + backward + optimize
+                  #       feats = net.conv_layers(instances)
+                  #       feats = feats.view(-1, net.fc_input_features)
+                  #       feats_np = feats.cpu().data.numpy()
 
-                        features.extend(feats_np)
+                  #       features.extend(feats_np)
 
-                              #del instances
-                        #del instances
-                  features_np = np.reshape(features,(n_elems, net.fc_input_features))
+                  #             #del instances
+                  #       #del instances
+                  # features_np = np.reshape(features,(n_elems, net.fc_input_features))
+
+                  features_np = np.load(datadir / "Saved_features/cptac" /  
+                                        cfg.data_augmentation.featuresdir / f"{wsi_id}.npy")
 
                   inputs = torch.tensor(features_np).float().to(device, non_blocking=True)
                   
                   logits_img, _ = net(None, inputs)
 
 
-                  sigmoid_output_img = F.softmax(logits_img)
-                  outputs_wsi_np_img = sigmoid_output_img.cpu().numpy()
+                  softmax_output_img = F.softmax(logits_img)
+                  outputs_wsi_np_img = softmax_output_img.cpu().numpy()
 
                   logging.info(f"pred_img_logits: {outputs_wsi_np_img}")
 
@@ -208,7 +213,10 @@ def main(experiment_name):
                   pred_nscc_squamous.append(outputs_wsi_np_img[2])
                   pred_normal.append(outputs_wsi_np_img[3])
 
-                  output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
+                  label = np.argmax(outputs_wsi_np_img)
+                  output_norm = np.array([0, 0, 0, 0])
+                  output_norm[label] = 1
+
                   logging.info(f"pred_img: {output_norm}")
                   logging.info(f"y_true: {labels_np}")
 

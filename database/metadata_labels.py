@@ -10,9 +10,9 @@ thispath = Path(__file__).resolve()
 def labels_from_json_he():
 
     datadir = Path(thispath.parent.parent / "data")
-
+    jsondir = Path(datadir / "csv_folder" / "lung_autolabels_v2")
     # Opening JSON file
-    json_files = [i for i in datadir.rglob("*.json") if "lung_data" in str(i)]
+    json_files = [i for i in jsondir.rglob("*.json")]
 
     he_csv = np.squeeze(pd.read_csv(Path(datadir / "lung_data" / "he_images.csv")).to_numpy())
     test_csv = np.squeeze(pd.read_csv(Path(datadir / "lung_data" / "test_images.csv")).to_numpy())

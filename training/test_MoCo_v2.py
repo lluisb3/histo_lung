@@ -66,16 +66,25 @@ def main(experiment_name):
 
     dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
 
-    subdirs = natsorted([e for e in similaridir.iterdir() if e.is_dir()])
-    labels = []
-    selected_patches = []
-    for dir in subdirs:
-        listdir = [i.stem for i in dir.iterdir()]
-        selected_patches.extend(listdir)
-        label = np.repeat(dir.stem, len(listdir))
-        labels = np.append(labels, label)
-    selected_patches.sort()
+    selected_patches = natsorted([e for e in similaridir.rglob("*.png")])
+    #  = []
+    # for dir in subdirs:
+    #     listdir = [i.stem for i in dir.iterdir()]
+    #     selected_patches.extend(listdir)
+    # selected_patches.sort()
     print(selected_patches)
+    cells = []
+    glands = []
+    stroma = []
+    for patch in selected_patches:
+        if patch.parent.stem == "cells":
+            cells.append(patch.stem)
+        elif patch.parent.stem == "glands":
+            glands.append(patch.stem)
+        elif patch.parent.stem == "stroma":
+            stroma.append(patch.stem)
+    print(cells)
+
     path_patches = []
     for wsi_patches in tqdm(dataset_path, desc="Selecting patches to check model"):
 
@@ -97,11 +106,24 @@ def main(experiment_name):
 
     feature_matrix = []
     selected_patches_path = []
+    labels = []
     for wsi in tqdm(path_patches):
-        if Path(wsi[0]).stem in selected_patches:
+        if Path(wsi[0]).stem in cells:
             selected_patches_path.append(wsi)
+            label = "cells"
+            labels = np.append(labels, label)
+        elif Path(wsi[0]).stem in glands:
+            selected_patches_path.append(wsi)
+            label = "glands"
+            labels = np.append(labels, label)
+        elif Path(wsi[0]).stem in stroma:
+            selected_patches_path.append(wsi)
+            label = "stroma"
+            labels = np.append(labels, label)
+    print(labels)
+    print(labels.shape)
     selected_patches_path.sort()
-    print(selected_patches_path)
+    # print(selected_patches_path)
     instances = Dataset_instance(selected_patches_path, transform=None, preprocess=preprocess)
     generator = DataLoader(instances, **params_instance)
 
@@ -136,7 +158,7 @@ def main(experiment_name):
     plt.savefig(similaridir / f"{experiment_name}_similarity_v2.svg")
     plt.clf()
 
-    feature_matrix = feature_matrix.reshape(len(labels), moco_dim)
+    feature_matrix = feature_matrix.reshape(len(selected_patches_path), moco_dim)
     pca = PCA(n_components=20)
     pca_features = pca.fit_transform(feature_matrix)
     print(f"Explained variation per principal component: {pca.explained_variance_ratio_}")

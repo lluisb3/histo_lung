@@ -46,6 +46,13 @@ class Encoder(torch.nn.Module):
                 self.L = self.E
                 self.D = 128
                 self.K = self.num_classes
+            
+            elif ('efficient' in self.model.model_name):
+                self.E = self.dim
+                self.L = self.E
+                self.D = 128
+                self.K = self.num_classes
+
 
             self.embedding = torch.nn.Linear(in_features=self.fc_input_features, out_features=self.E)
             self.post_embedding = torch.nn.Linear(in_features=self.E, out_features=self.E)

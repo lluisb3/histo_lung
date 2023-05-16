@@ -36,12 +36,19 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     help="Name of the MoCo experiment",
 )
 def main(config_file, exp_name_moco):
+	# Seed for reproducibility
+	seed = 33
+	torch.manual_seed(seed)
+	if torch.cuda.is_available():
+		torch.cuda.manual_seed_all(seed)
+	np.random.seed(seed)
+	
 	# Read the configuration file
 	configdir = Path(thispath.parent / f"{config_file}.yml")
 	cfg = yaml_load(configdir)
 
 	# Create directory to save the resuls
-	outputdir = Path(datadir / "Saved_features" / cfg.experiment_name)
+	outputdir = Path(thispath.parent.parent / "data/Saved_features/cptac" / cfg.experiment_name)
 	Path(outputdir).mkdir(exist_ok=True, parents=True)
 
 	# Save config parameters for experiment
@@ -98,7 +105,7 @@ def main(config_file, exp_name_moco):
 
 	hidden_space_len = cfg.model.hidden_space_len
 
-	net = MIL_model(model, hidden_space_len)
+	net = MIL_model(model, hidden_space_len, cfg)
 	net.load_state_dict(checkpoint_moco["encoder_state_dict"], strict=False)
 	net.to(device)
 	net.eval()
@@ -106,6 +113,17 @@ def main(config_file, exp_name_moco):
 	pyhistdir = Path(datadir / "Mask_PyHIST") 
 
 	dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
+
+	metadata_test = pd.read_csv(pyhistdir / "metadata_slides.csv", index_col=0)
+
+	discard_wsi_test = []
+	if (metadata_test['number_filtered_patches'] < 10).any():
+		for index, row in metadata_test.iterrows():
+				if row['number_filtered_patches'] < 10:
+					discard_wsi_test.append(index)
+
+		logging.info(f"There is {len(discard_wsi_test)} WSI discarded in test, <10 patches")
+		logging.info(discard_wsi_test)
 
 	patches_path = {}
 	for wsi_patches_path in tqdm(dataset_path, desc="Selecting patches: "):
@@ -122,6 +140,8 @@ def main(config_file, exp_name_moco):
 
 	logging.info(f"Total number of WSI for CPTAC {len(patches_path)}")
 
+	for discard_wsi in discard_wsi_test:
+		patches_path.pop(discard_wsi, None)
 
 	for wsi_id, path_for_patches in tqdm(patches_path.items()):
 

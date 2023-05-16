@@ -1,4 +1,4 @@
-experiment_name: MIL_0001_convnext_focal_feat_sche01_NoAChannel
+experiment_name: f_MIL_003_focal_AChannel
 model:
     model_name: "convnext"
     num_classes: 4
@@ -21,7 +21,7 @@ dataloader:
 
 data_augmentation:
     boolean: False
-    featuresdir: Features_convnext_NoChannel
+    featuresdir: Features_convnext_AChannel
     prob: 0.5
 
 training:
@@ -29,14 +29,14 @@ training:
     moco_dim: 128
     moco_m: 0.999
     temperature: 0.07
-    epochs: 50
-    early_stop: 20
+    epochs: 40
+    early_stop: 10
     criterion: focal
     criterion_args:
         weights: None
     optimizer: "Adam"
     optimizer_args:
-        lr: 0.001
+        lr: 0.003
         betas:
         - 0.9
         - 0.999
@@ -57,4 +57,4 @@ wandb:
   enable: True
   project: "histo_lung"
   username: "lluisb3"
-  group: "MIL"
+  group: "MIL_feat"

@@ -66,7 +66,7 @@ class MIL_model(torch.nn.Module):
                 torch.nn.Tanh(),
                 torch.nn.Linear(self.D, self.K)
             )
-
+            
             if "NoChannel" in self.cfg.data_augmentation.featuresdir:
                 print("== Attention No Channel ==")
                 self.embedding_before_fc = torch.nn.Linear(self.E * self.K, self.E)

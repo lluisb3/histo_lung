@@ -81,7 +81,7 @@ def main(experiment_name, dataset):
 
       hidden_space_len = cfg.model.hidden_space_len
 
-      net = MIL_model(model, hidden_space_len)
+      net = MIL_model(model, hidden_space_len, cfg)
 
       net.load_state_dict(checkpoint["model_state_dict"], strict=False)
       net.to(device)
@@ -129,7 +129,7 @@ def main(experiment_name, dataset):
             logging.info(discard_wsi_test)
 
       # Load Test Dataset and Labels
-      test_csv = pd.read_csv(Path(datadir / f"labels_test.csv"), index_col=0)
+      test_csv = pd.read_csv(Path(datadir / f"manual_labels_test.csv"), index_col=0)
       test_csv.index = test_csv.index.str.replace("/", '-')
       test_csv.drop(discard_wsi_test, inplace=True)
 
@@ -138,8 +138,8 @@ def main(experiment_name, dataset):
 
       # Load Test patches
       if dataset == "test":
-
-            dataset_path = natsorted([i for i in testdir.rglob("*_densely_filtered_paths.csv")])
+            
+            dataset_path = natsorted([i for i in testdir.rglob("*_densely_filtered_paths_v2.csv")])
 
             patches_test = {}
             for wsi_patches_path in tqdm(dataset_path, desc="Selecting patches: "):
@@ -615,6 +615,11 @@ def main(experiment_name, dataset):
                         pred_normal.append(outputs_wsi_np_img[3])
 
                         output_norm = np.where(outputs_wsi_np_img > 0.5, 1, 0)
+
+                        if np.all(output_norm == 0):
+                              label = np.argmax(outputs_wsi_np_img)
+                              output_norm[label] = 1
+
                         logging.info(f"pred_img: {output_norm}")
                         logging.info(f"y_true: {labels_np}")
 
