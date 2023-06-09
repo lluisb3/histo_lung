@@ -1,3 +1,15 @@
+# Big files
+data/*
+trash.py
+scripts_niccolo
+HistoQC
+csv_files_extra
+PyHIST
+CLAM
+bash_files/*
+trained_models/*
+csv_patch_similarity/*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
