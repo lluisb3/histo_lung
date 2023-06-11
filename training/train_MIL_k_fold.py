@@ -575,7 +575,7 @@ def train(cfg,
         plt.ylabel("True Positive Rate (Tpr)")
         plt.title("Train ROC Lung Cancer Multiclass")
         plt.legend(loc="lower right")
-        plt.savefig(outputdir / f"train_{epoch + 1}_roc.png")
+        plt.savefig(outputdir / f"train_{epoch + 1}_roc.svg")
         plt.close()
 
         # Plot PR curve
@@ -602,7 +602,7 @@ def train(cfg,
         plt.ylabel("Precision")
         plt.title("Train PR curve Lung Cancer Multiclass")
         plt.legend(loc="lower left")
-        plt.savefig(outputdir / f"train_{epoch + 1}_pr_curve.png")
+        plt.savefig(outputdir / f"train_{epoch + 1}_pr_curve.svg")
         plt.close()
 
         if cfg.wandb.enable:
@@ -695,7 +695,7 @@ def train(cfg,
         plt.ylabel("True Positive Rate (Tpr)")
         plt.title("Validation ROC Lung Cancer Multiclass")
         plt.legend(loc="lower right")
-        plt.savefig(outputdir / f"valid_{epoch + 1}_roc.png")
+        plt.savefig(outputdir / f"valid_{epoch + 1}_roc.svg")
         plt.close()
 
         # Plot PR curve
@@ -722,7 +722,7 @@ def train(cfg,
         plt.ylabel("Precision")
         plt.title("Validation PR curve Lung Cancer Multiclass")
         plt.legend(loc="lower left")
-        plt.savefig(outputdir / f"valid_{epoch + 1}_pr_curve.png")
+        plt.savefig(outputdir / f"valid_{epoch + 1}_pr_curve.svg")
         plt.close()
     
         # Wandb
@@ -815,17 +815,23 @@ def train(cfg,
 @click.command()
 @click.option(
     "--config_file",
-    default="config_MIL",
+    default="config_MIL_best",
     prompt="Name of the config file without extension",
     help="Name of the config file without extension",
 )
 @click.option(
     "--exp_name_moco",
-    default="MoCo_resnet34_scheduler_51015",
+    default="MoCo_resnet101_v2",
     prompt="Name of the MoCo experiment",
     help="Name of the MoCo experiment",
 )
-def main(config_file, exp_name_moco):
+@click.option(
+    "--manual_auto",
+    default="manual",
+    prompt="Manual or automatic labels from SKET. 'manual' for manual labels 'auto' for automatic.",
+    help="Manual or automatic labels from SKET. 'manual' for manual labels 'auto' for automatic.",
+)
+def main(config_file, exp_name_moco, manual_auto):
     # Read the configuration file
     configdir = Path(thispath.parent / f"{config_file}.yml")
     cfg = yaml_load(configdir)
@@ -837,13 +843,7 @@ def main(config_file, exp_name_moco):
     # Save config parameters for experiment
     with open(Path(f"{outputdir}/config_{cfg.experiment_name}.yml"), 'w') as yaml_file:
         yaml.dump(edict2dict(cfg), yaml_file, default_flow_style=False)
-
     # wandb login
-    if cfg.wandb.enable:
-            wandb.login()
-            # key = os.environ.get("WANDB_API_KEY")
-            wandb_run = initialize_wandb(cfg, outputdir)
-            wandb_run.define_metric("epoch", summary="max")
 
     # For logging
     logging.basicConfig(format='%(asctime)s %(levelname)s:%(message)s',
@@ -868,7 +868,13 @@ def main(config_file, exp_name_moco):
     # Loading Data Split
     k = 5
 
-    data_split = pd.read_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split.csv"), index_col=0)
+    if manual_auto == "manual":
+        logging.info("==== Loading MANUAL labels ====")
+        data_split = pd.read_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split.csv"), index_col=0)
+    elif manual_auto == "auto":
+        logging.info("==== Loading AUTOMATIC labels ====")
+        data_split = pd.read_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split_autov2.csv"), index_col=0)
+    
     train_dataset_k = []
     validation_dataset_k = []
     train_labels_k = []
@@ -883,12 +889,6 @@ def main(config_file, exp_name_moco):
         validation_dataset_k.append(validation_wsi)
         train_labels_k.append(labels_train)
         validation_labels_k.append(labels_validation)
-
-    # Load fold 0
-    train_dataset = train_dataset_k[0]
-    validation_dataset = validation_dataset_k[0]
-    train_labels = train_labels_k[0]
-    validation_labels = validation_labels_k[0]
     
     # Discard WSI with less than 10 patches
     pyhistdir = Path(datadir / "Mask_PyHIST_v2") 
@@ -908,15 +908,6 @@ def main(config_file, exp_name_moco):
         logging.info(f"There is {len(discard_wsi_dataset)} WSI discarded in train/valid becasue <10 patches")
         logging.info(discard_wsi_dataset)
 
-    for i, image in enumerate(train_dataset):
-        if image in discard_wsi_dataset:
-            train_dataset.pop(i)
-            train_labels.pop(i)
-
-    for i, image in enumerate(validation_dataset):
-        if image in discard_wsi_dataset:
-            validation_dataset.pop(i)
-            validation_labels.pop(i)
 
     # Load patches path
     if "v2" in exp_name_moco:
@@ -927,7 +918,6 @@ def main(config_file, exp_name_moco):
         logging.info("== Version 1 filter patches ==")
         dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv") 
                                 if "LungAOEC" in str(i)])
-
     patches_path = {}
     for wsi_patches_path in tqdm(dataset_path, desc="Selecting patches: "):
 
@@ -935,161 +925,180 @@ def main(config_file, exp_name_moco):
 
         name = wsi_patches_path.parent.stem
         patches_path[name] = csv_patch_path
-        # patches_names[name] = [filenames]
+ 
+    # Train for k folds
+    for i in range(k):
+        
+        outputdir_kmodel = Path(outputdir / f"fold_{i}")
+        Path(outputdir_kmodel).mkdir(exist_ok=True, parents=True)
+        
+        if cfg.wandb.enable:
+            wandb.login()
+            # key = os.environ.get("WANDB_API_KEY")
+            wandb_run = initialize_wandb(cfg, outputdir_kmodel, i)
+            wandb_run.define_metric("epoch", summary="max")
 
-        # patches_names[name] = []
-        # for instance in csv_patch_path:
-        #         patches_names[name].append(str(instance).split("/")[-1])
+        train_dataset = train_dataset_k[i]
+        validation_dataset = validation_dataset_k[i]
+        train_labels = train_labels_k[i]
+        validation_labels = validation_labels_k[i]
 
-    logging.info(f"Total number of WSI for train/validation {len(patches_path)}")
+        for j, image in enumerate(train_dataset):
+            if image in discard_wsi_dataset:
+                train_dataset.pop(j)
+                train_labels.pop(j)
 
-    patches_train = {}
-    patches_validation = {}
-    for value, key in zip(patches_path.values(), patches_path.keys()):
-        if key in train_dataset:
-            patches_train[key] = value
-        if key in validation_dataset:
-            patches_validation[key] = value
+        for j, image in enumerate(validation_dataset):
+            if image in discard_wsi_dataset:
+                validation_dataset.pop(j)
+                validation_labels.pop(j)    
 
-    logging.info(f"Total number of WSI for train {len(patches_train.values())}")
-    logging.info(f"Total number of WSI for validation {len(patches_validation.values())}")
+        logging.info(f"Total number of WSI for train/validation {len(patches_path)}")
 
-    # Load datasets
-    batch_size_bag = cfg.dataloader.batch_size_bag
+        patches_train = {}
+        patches_validation = {}
+        for value, key in zip(patches_path.values(), patches_path.keys()):
+            if key in train_dataset:
+                patches_train[key] = value
+            if key in validation_dataset:
+                patches_validation[key] = value
 
-    sampler = Balanced_Multimodal
-    train_data_labels = np.zeros([len(train_dataset), 5], dtype=float)
-    train_data_labels[:, 0] = train_dataset
-    train_data_labels[:, 1:] = np.array(train_labels)
+        logging.info(f"Total number of WSI for train {len(patches_train.values())}")
+        logging.info(f"Total number of WSI for validation {len(patches_validation.values())}")
 
-    # params_train_bag = {'batch_size': batch_size_bag,
-    #     'sampler': sampler(train_data_labels, alpha=0.25)}
+        # Load datasets
+        batch_size_bag = cfg.dataloader.batch_size_bag
 
-    params_train_bag = {'batch_size': batch_size_bag,
-                        'shuffle': True}
+        # params_train_bag = {'batch_size': batch_size_bag,
+        #     'sampler': sampler(train_data_labels, alpha=0.25)}
 
-    params_valid_bag = {'batch_size': batch_size_bag, # len(validation_dataset),
-                        'shuffle': False}
+        params_train_bag = {'batch_size': batch_size_bag,
+                            'shuffle': True}
 
-    training_set_bag = Dataset_bag_MIL(train_dataset, train_labels)
-    training_generator_bag = DataLoader(training_set_bag, **params_train_bag)
+        params_valid_bag = {'batch_size': batch_size_bag, # len(validation_dataset),
+                            'shuffle': False}
 
-    validation_set_bag = Dataset_bag_MIL(validation_dataset, validation_labels)
-    validation_generator_bag = DataLoader(validation_set_bag, **params_valid_bag)
+        training_set_bag = Dataset_bag_MIL(train_dataset, train_labels)
+        training_generator_bag = DataLoader(training_set_bag, **params_train_bag)
 
-    # Load features from MoCo model
-    experiment_name = exp_name_moco
+        validation_set_bag = Dataset_bag_MIL(validation_dataset, validation_labels)
+        validation_generator_bag = DataLoader(validation_set_bag, **params_valid_bag)
 
-    logging.info(f"== Loading MoCo from {experiment_name} ==")
+        # Load features from MoCo model
+        experiment_name = exp_name_moco
 
-    mocodir = Path(thispath.parent.parent / 
-                "trained_models" / 
-                "MoCo" / 
-                experiment_name)
+        logging.info(f"== Loading MoCo from {experiment_name} ==")
 
-    cfg_moco = yaml_load(mocodir / f"config_{experiment_name}.yml")
+        mocodir = Path(thispath.parent.parent / 
+                    "trained_models" / 
+                    "MoCo" / 
+                    experiment_name)
 
-    checkpoint_moco = torch.load(Path(mocodir /
-                                cfg_moco.dataset.magnification / 
-                                cfg_moco.model.model_name / 
-                                f"{exp_name_moco}.pt"))
+        cfg_moco = yaml_load(mocodir / f"config_{experiment_name}.yml")
+
+        checkpoint_moco = torch.load(Path(mocodir /
+                                    cfg_moco.dataset.magnification / 
+                                    cfg_moco.model.model_name / 
+                                    f"{exp_name_moco}.pt"))
 
 
-    # Load pretrained model
-    model = ModelOption(cfg.model.model_name,
-                cfg.model.num_classes,
-                freeze=cfg.model.freeze_weights,
-                num_freezed_layers=cfg.model.num_frozen_layers,
-                dropout=cfg.model.dropout,
-                embedding_bool=cfg.model.embedding_bool,
-                pool_algorithm=cfg.model.pool_algorithm
-                )
+        # Load pretrained model
+        model = ModelOption(cfg.model.model_name,
+                    cfg.model.num_classes,
+                    freeze=cfg.model.freeze_weights,
+                    num_freezed_layers=cfg.model.num_frozen_layers,
+                    dropout=cfg.model.dropout,
+                    embedding_bool=cfg.model.embedding_bool,
+                    pool_algorithm=cfg.model.pool_algorithm
+                    )
 
-    hidden_space_len = cfg.model.hidden_space_len
+        hidden_space_len = cfg.model.hidden_space_len
 
-    net = MIL_model(model, hidden_space_len, cfg)
+        net = MIL_model(model, hidden_space_len, cfg)
 
-    net.load_state_dict(checkpoint_moco["encoder_state_dict"], strict=False)
-    net.to(device)
-    net.eval()
+        net.load_state_dict(checkpoint_moco["encoder_state_dict"], strict=False)
+        net.to(device)
+        net.eval()
 
-    for name, param in net.conv_layers.named_parameters():
-        #if '10' in name or '11' in name: 
-        param.requires_grad = False
+        for name, param in net.conv_layers.named_parameters():
+            #if '10' in name or '11' in name: 
+            param.requires_grad = False
 
-    total_params = sum(p.numel() for p in net.parameters())
-    logging.info(f'{total_params:,} total parameters.')
-    total_trainable_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-    logging.info(f'{total_trainable_params:,} training parameters CNN.')
+        total_params = sum(p.numel() for p in net.parameters())
+        logging.info(f'{total_params:,} total parameters.')
+        total_trainable_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+        logging.info(f'{total_trainable_params:,} training parameters CNN.')
 
-    # Data normalization
-    preprocess = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=cfg.dataset.mean, std=cfg.dataset.stddev),
-        transforms.Resize(size=(model.resize_param, model.resize_param),
-        antialias=True)
-    ])
+        # Data normalization
+        preprocess = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=cfg.dataset.mean, std=cfg.dataset.stddev),
+            transforms.Resize(size=(model.resize_param, model.resize_param),
+            antialias=True)
+        ])
 
-    # Loss function
-    if cfg.training.criterion == "focal":
-        criterion = None
-        logging.info("== Criterion: Focal Loss ==")
-
-    else:
-        if cfg.training.criterion_args.get('weights') is not None:
-            weights = torch.tensor(cfg.training.criterion_args.weights,
-                                dtype=torch.float,
-                                device=device)
-            criterion = getattr(torch.nn, cfg.training.criterion)(weight=weights)
-            logging.info(f"== Criterion: {cfg.training.criterion} with weights ==")
+        # Loss function
+        if cfg.training.criterion == "focal":
+            criterion = None
+            logging.info("== Criterion: Focal Loss ==")
 
         else:
-            criterion = getattr(torch.nn, cfg.training.criterion)()
-            logging.info(f"== Criterion: {cfg.training.criterion} ==")
+            if cfg.training.criterion_args.get('weights') is not None:
+                weights = torch.tensor(cfg.training.criterion_args.weights,
+                                    dtype=torch.float,
+                                    device=device)
+                criterion = getattr(torch.nn, cfg.training.criterion)(weight=weights)
+                logging.info(f"== Criterion: {cfg.training.criterion} with weights ==")
 
-    # Optimizer
-    param_optimizer_cfg = cfg.training.optimizer_args
-    
-    lr = param_optimizer_cfg.lr
-    wt_decay = param_optimizer_cfg.weight_decay
-    betas = param_optimizer_cfg.betas
-    eps = param_optimizer_cfg.eps
-    amsgrad = param_optimizer_cfg.amsgrad
-    momen = param_optimizer_cfg.momentum
+            else:
+                criterion = getattr(torch.nn, cfg.training.criterion)()
+                logging.info(f"== Criterion: {cfg.training.criterion} ==")
 
-    if cfg.training.optimizer == "Adam":
-        logging.info(f"== Optimizer: {cfg.training.optimizer} ==")
-        optimizer = Adam(net.parameters(), lr=lr, betas=betas, eps=eps, weight_decay=wt_decay, amsgrad=amsgrad)
-    elif cfg.training.optimizer == "AdamW":
-        logging.info(f"== Optimizer: {cfg.training.optimizer} ==")
-        optimizer = AdamW(net.parameters(),lr=lr, betas=betas, eps=eps, weight_decay=wt_decay, amsgrad=amsgrad)
-    elif cfg.training.optimizer == "SGD":
-        logging.info(f"== Optimizer: {cfg.training.optimizer} ==")
-        optimizer = SGD(net.parameters(),lr=lr, momentum=momen, weight_decay=wt_decay)
-    elif cfg.training.optimizer == "RMSprop":
-        logging.info(f"== Optimizer: {cfg.training.optimizer} ==")
-        optimizer = RMSprop(net.parameters(), lr=lr, alpha=0.99, eps=eps, weight_decay=wt_decay, momentum=momen)
+        # Optimizer
+        param_optimizer_cfg = cfg.training.optimizer_args
+        
+        lr = param_optimizer_cfg.lr
+        wt_decay = param_optimizer_cfg.weight_decay
+        betas = param_optimizer_cfg.betas
+        eps = param_optimizer_cfg.eps
+        amsgrad = param_optimizer_cfg.amsgrad
+        momen = param_optimizer_cfg.momentum
 
-    scheduler = getattr(torch.optim.lr_scheduler, cfg.training.lr_scheduler)
-    scheduler = scheduler(optimizer, **cfg.training.lr_scheduler_args)
+        if cfg.training.optimizer == "Adam":
+            logging.info(f"== Optimizer: {cfg.training.optimizer} ==")
+            optimizer = Adam(net.parameters(), lr=lr, betas=betas, eps=eps, weight_decay=wt_decay, amsgrad=amsgrad)
+        elif cfg.training.optimizer == "AdamW":
+            logging.info(f"== Optimizer: {cfg.training.optimizer} ==")
+            optimizer = AdamW(net.parameters(),lr=lr, betas=betas, eps=eps, weight_decay=wt_decay, amsgrad=amsgrad)
+        elif cfg.training.optimizer == "SGD":
+            logging.info(f"== Optimizer: {cfg.training.optimizer} ==")
+            optimizer = SGD(net.parameters(),lr=lr, momentum=momen, weight_decay=wt_decay)
+        elif cfg.training.optimizer == "RMSprop":
+            logging.info(f"== Optimizer: {cfg.training.optimizer} ==")
+            optimizer = RMSprop(net.parameters(), lr=lr, alpha=0.99, eps=eps, weight_decay=wt_decay, momentum=momen)
 
-    # Training
-    train(cfg,
-          net,
-          criterion,
-          optimizer,
-          scheduler, 
-          train_dataset, 
-          validation_dataset, 
-          training_generator_bag,
-          patches_train,
-          validation_generator_bag,
-          patches_validation,
-          preprocess,
-          outputdir)
+        scheduler = getattr(torch.optim.lr_scheduler, cfg.training.lr_scheduler)
+        scheduler = scheduler(optimizer, **cfg.training.lr_scheduler_args)
 
-    if cfg.wandb.enable:
-        wandb.finish()
+        # Training
+        train(cfg,
+            net,
+            criterion,
+            optimizer,
+            scheduler, 
+            train_dataset, 
+            validation_dataset, 
+            training_generator_bag,
+            patches_train,
+            validation_generator_bag,
+            patches_validation,
+            preprocess,
+            outputdir_kmodel)
+
+        if cfg.wandb.enable:
+            wandb.finish()
+        
+        logging.info(f"==== Finish model for FOLD {i} ====")
 
 
 if __name__ == '__main__':

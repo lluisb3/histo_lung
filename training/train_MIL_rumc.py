@@ -158,15 +158,6 @@ def generate_transformer(prob = 0.5):
     return pipeline_transform
 
 
-# def validation_1_epoch(cfg,
-#                        net,
-#                        criterion,
-#                        generator,
-#                        patches_validation,
-#                        preprocess,
-#                        iterations,
-#                        epoch):
-
 def validation_1_epoch(cfg,
                        net,
                        criterion,
@@ -210,28 +201,6 @@ def validation_1_epoch(cfg,
             labels_local = labels.float().flatten().to(device, non_blocking=True)
 
             features_np = np.load(datadir / "Saved_features" / featuresdir / f"{wsi_id}.npy")
-
-            # validation_generator_instance = get_generator_instances(patches_validation[wsi_id], 
-            #                                                         preprocess,
-            #                                                         cfg.dataloader.batch_size, 
-            #                                                         None,
-            #                                                         cfg.dataloader.num_workers) 
-
-            # n_elems = len(patches_validation[wsi_id])   
-
-            # features = []
-            
-            # for instances in validation_generator_instance:
-            #     instances = instances.to(device, non_blocking=True)
-
-            #     # forward + backward + optimize
-            #     feats = net.conv_layers(instances)
-            #     feats = feats.view(-1, net.fc_input_features)
-            #     feats_np = feats.cpu().data.numpy()
-
-            #     features.extend(feats_np)
-
-            # features_np = np.reshape(features,(n_elems, net.fc_input_features))
 
             inputs = torch.tensor(features_np).float().to(device, non_blocking=True)
         
@@ -309,17 +278,7 @@ def train_1_epoch(cfg,
 
     dataloader_iterator = iter(generator)
 
-    net.train()
-
-    # if (flag_dataset=='finetune_pretrain'):
-    #     for param in net.embedding.parameters():
-    #         param.requires_grad = False
-
-    #     for param in net.attention.parameters():
-    #         param.requires_grad = False
-            
-    #     for param in net.embedding_before_fc.parameters():
-    #         param.requires_grad = False		
+    net.train()	
 
     for i in range(iterations):
         logging.info(f"[{epoch + 1}], {i + 1} / {iterations}")
@@ -336,11 +295,6 @@ def train_1_epoch(cfg,
 
         labels_local = labels.float().flatten().to(device, non_blocking=True)
 
-        # print("[" + str(i) + "/" + str(len(train_dataset)) + "], " + "inputs_bag: " + str(wsi_id))
-        # print("labels: " + str(labels_np))
-    
-
-        #pipeline_transform = generate_transformer(labels_np[i_wsi])
         pipeline_transform = generate_transformer()
 
         if data_augmentation:
@@ -874,11 +828,13 @@ def main(config_file, exp_name_moco):
     train_labels_k = []
     validation_labels_k = []
 
-    for fold, _ in data_split.iterrows():
-        train_wsi = literal_eval(data_split.loc[fold]["images_train"])
-        validation_wsi = literal_eval(data_split.loc[fold]["images_validation"])
-        labels_train = literal_eval(data_split.loc[fold]["labels_train"])
-        labels_validation = literal_eval(data_split.loc[fold]["labels_validation"])
+    data_split_rumc = pd.read_csv(Path(datadir / f"{k}_fold_crossvalidation_data_split_rumc.csv"), index_col=0)
+
+    for (fold, _), (fold_rumc, _) in zip(data_split.iterrows(), data_split_rumc.iterrows()):
+        train_wsi = literal_eval(data_split.loc[fold]["images_train"]) + literal_eval(data_split_rumc.loc[fold_rumc]["images_train"])
+        validation_wsi = literal_eval(data_split.loc[fold]["images_validation"]) + literal_eval(data_split_rumc.loc[fold_rumc]["images_validation"])
+        labels_train = literal_eval(data_split.loc[fold]["labels_train"]) + literal_eval(data_split_rumc.loc[fold_rumc]["labels_train"])
+        labels_validation = literal_eval(data_split.loc[fold]["labels_validation"]) + literal_eval(data_split_rumc.loc[fold_rumc]["labels_validation"])
         train_dataset_k.append(train_wsi)
         validation_dataset_k.append(validation_wsi)
         train_labels_k.append(labels_train)
@@ -891,7 +847,8 @@ def main(config_file, exp_name_moco):
     validation_labels = validation_labels_k[0]
     
     # Discard WSI with less than 10 patches
-    pyhistdir = Path(datadir / "Mask_PyHIST_v2") 
+    pyhistdir = Path(datadir / "Mask_PyHIST_v2")
+    pyhistdir_rumc = Path(datadir / "Mask_PyHIST")
 
     if "v2" in exp_name_moco:
         metadata_dataset = pd.read_csv(pyhistdir / "metadata_slides_v2.csv", index_col=0,
@@ -899,10 +856,20 @@ def main(config_file, exp_name_moco):
     else:
         metadata_dataset = pd.read_csv(pyhistdir / "metadata_slides.csv", index_col=0,
                                    dtype={"ID wsi": str})
+        
+    metadata_dataset_rumc = pd.read_csv(pyhistdir_rumc / "metadata_slides_v2.csv", index_col=0,
+                                   dtype={"ID wsi": str})  
 
     discard_wsi_dataset = []
     if (metadata_dataset['number_filtered_patches'] < 10).any():
         for index, row in metadata_dataset.iterrows():
+            if row['number_filtered_patches'] < 10:
+                discard_wsi_dataset.append(index)
+        logging.info(f"There is {len(discard_wsi_dataset)} WSI discarded in train/valid becasue <10 patches")
+        logging.info(discard_wsi_dataset)
+
+    if (metadata_dataset_rumc['number_filtered_patches'] < 10).any():
+        for index, row in metadata_dataset_rumc.iterrows():
             if row['number_filtered_patches'] < 10:
                 discard_wsi_dataset.append(index)
         logging.info(f"There is {len(discard_wsi_dataset)} WSI discarded in train/valid becasue <10 patches")
@@ -927,19 +894,21 @@ def main(config_file, exp_name_moco):
         logging.info("== Version 1 filter patches ==")
         dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv") 
                                 if "LungAOEC" in str(i)])
+    
+    dataset_path_rumc = natsorted([i for i in pyhistdir_rumc.rglob("*_densely_filtered_paths_v2.csv")])
 
+    dataset_path = dataset_path + dataset_path_rumc
+
+    for i, path in enumerate(dataset_path):
+        if str(path.parent.stem) in discard_wsi_dataset:
+            dataset_path.pop(i)
+            dataset_path.pop(i)
     patches_path = {}
     for wsi_patches_path in tqdm(dataset_path, desc="Selecting patches: "):
-
         csv_patch_path = pd.read_csv(wsi_patches_path).to_numpy()
 
         name = wsi_patches_path.parent.stem
         patches_path[name] = csv_patch_path
-        # patches_names[name] = [filenames]
-
-        # patches_names[name] = []
-        # for instance in csv_patch_path:
-        #         patches_names[name].append(str(instance).split("/")[-1])
 
     logging.info(f"Total number of WSI for train/validation {len(patches_path)}")
 
@@ -956,11 +925,6 @@ def main(config_file, exp_name_moco):
 
     # Load datasets
     batch_size_bag = cfg.dataloader.batch_size_bag
-
-    sampler = Balanced_Multimodal
-    train_data_labels = np.zeros([len(train_dataset), 5], dtype=float)
-    train_data_labels[:, 0] = train_dataset
-    train_data_labels[:, 1:] = np.array(train_labels)
 
     # params_train_bag = {'batch_size': batch_size_bag,
     #     'sampler': sampler(train_data_labels, alpha=0.25)}

@@ -31,8 +31,8 @@ def train(encoder, momentum_encoder, optimizer, scheduler, transform, preprocess
     logging.info("== Start training ==")
     start_time = time.time()
     
-    pyhistdir = Path(datadir / "Mask_PyHIST_v2")
-    dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths_v2.csv")])
+    dataset_path = natsorted([i for i in datadir.rglob("*_densely_filtered_paths_v2.csv") 
+                              if "Mask_PyHIST" in str(i) and "Mask_PyHIST_v1" not in str(i)])
 
     number_patches = 0
     path_patches = []

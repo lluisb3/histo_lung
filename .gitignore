@@ -8,7 +8,7 @@ PyHIST
 CLAM
 bash_files/*
 trained_models/*
-csv_patch_similarity/*
+patch_similarity/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

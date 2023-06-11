@@ -10,7 +10,7 @@ thispath = Path(__file__).resolve()
 
 def binary_mask_pyhist():
 
-    maskdir = Path("/mnt/nas6/data/cptac/Mask_PyHIST")
+    maskdir = Path("/mnt/nas6/data/lung_tcga/Mask_PyHIST_tif")
 
     colorful_masks = [i for i in maskdir.rglob("*.ppm")]
 
@@ -26,8 +26,7 @@ def binary_mask_pyhist():
         copy[(copy == most_frequent).all(axis=-1)] = 0
         binary_mask = copy[:, :, 0]
 
-        cv.imwrite(f"{maskdir}/{mask.parent.parent.stem}/{mask.parent.stem}/"
-                   f"binary_{mask.parent.stem}.png",
+        cv.imwrite(f"{maskdir}/{mask.parent.parent.stem}/{mask.parent.stem}/binary_{mask.parent.stem}.png",
                    binary_mask, [cv.IMWRITE_PNG_BILEVEL, 1])
 
     print(f"Binary masks created from PyHIST and saved in {maskdir}")

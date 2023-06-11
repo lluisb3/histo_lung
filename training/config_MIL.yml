@@ -1,4 +1,4 @@
-experiment_name: f_MIL_res101_weights_cosine
+experiment_name: f_MIL_res101v2_v2_rumc
 model:
     model_name: "resnet101"
     num_classes: 4
@@ -17,40 +17,38 @@ dataset:
 dataloader:
     batch_size_bag: 1
     batch_size: 512
-    num_workers: 6
+    num_workers: 1
 
 data_augmentation:
     boolean: False
-    featuresdir: Features_resnet101_NoChannel
+    featuresdir: Features_resnet101_v2_NoChannel
     prob: 0.5
 
 training:
-    epochs: 50
-    early_stop: 20
+    epochs: 40
+    early_stop: 15
     criterion: BCEWithLogitsLoss
     criterion_args:
         weights: [0.824, 0.477, 0.809, 0.742]
     optimizer: "Adam"
     optimizer_args:
-        lr: 0.00015
+        lr: 0.0001
         betas:
         - 0.9
         - 0.999
         eps: 1.0e-08
         weight_decay: 1.0e-4
         amsgrad: True
-    # optimizer_args:
-    #     lr: 0.01
-    #     momentum: 0.9
-    #     weight_decay: 1e-4
-    lr_scheduler: 'CosineAnnealingLR'
+        momentum: 0.9
+    lr_scheduler: 'MultiStepLR'
     lr_scheduler_args:
-        T_max: 10
-        eta_min: 0.00005
+        milestones: [10, 20]
+        gamma: 0.5
     resume_training: False
 
 wandb:
   enable: True
   project: "histo_lung"
   username: "lluisb3"
-  group: "MIL_feat"
+  group: "MIL_rumc"
+

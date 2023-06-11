@@ -19,14 +19,11 @@ def data_splits(k):
 
     datadir = Path(thispath.parent.parent / "data")
 
-    csv_ids = Path(datadir / "patients_ID.csv")
-    csv_dataset_AOEC = Path(datadir / "labels_auto.csv")
+    csv_ids = Path(datadir / "labels_id_rumc.csv")
+
+    pyhistdir_rumc = Path(datadir / "Mask_PyHIST")
 
     # read data
-    dataset_AOEC = pd.read_csv(csv_dataset_AOEC,
-                                sep=',', 
-                                index_col=0, 
-                                dtype={"image_num":str})
 
     patients_id = pd.read_csv(csv_ids,
                                 sep=',', 
@@ -36,6 +33,21 @@ def data_splits(k):
     df = patients_id.drop_duplicates(subset='ID', keep="first")
     patients = df.values
 
+    metadata_dataset_rumc = pd.read_csv(pyhistdir_rumc / "metadata_slides_v2.csv", index_col=0,
+                                   dtype={"ID wsi": str})  
+
+    discard_wsi_dataset = []
+    if (metadata_dataset_rumc['number_filtered_patches'] < 10).any():
+        for index, row in metadata_dataset_rumc.iterrows():
+            if row['number_filtered_patches'] < 10:
+                discard_wsi_dataset.append(index)
+        print(f"There is {len(discard_wsi_dataset)} WSI discarded in train/valid becasue <10 patches")
+        print(discard_wsi_dataset)
+
+    for i, image in enumerate(patients):
+        if image in discard_wsi_dataset:
+            patients.pop(i)
+    
     folds = create_folds(patients, k)
     header = ["images_train", "images_validation", "labels_train", "labels_validation"]
     folds_dataset = pd.DataFrame(columns=header)

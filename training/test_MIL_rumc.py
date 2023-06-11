@@ -120,6 +120,7 @@ def main(experiment_name, dataset, version_patch_selection):
       validation_labels = validation_labels_k[0]
 
       pyhistdir = Path(datadir / "Mask_PyHIST_v2")
+      pyhistdir_rumc = Path(datadir / "Mask_PyHIST")
       
       # Discard WSI with less than 10 patches
       testdir = Path(pyhistdir / "Lung")
@@ -128,11 +129,14 @@ def main(experiment_name, dataset, version_patch_selection):
       elif version_patch_selection == "v1":
             metadata_test = pd.read_csv(testdir / "metadata_slides.csv", index_col=0)
 
+      metadata_rumc = pd.read_csv(pyhistdir_rumc / "metadata_slides_v2.csv", index_col=0)
+
       discard_wsi_test = []
       if (metadata_test['number_filtered_patches'] < 10).any():
             for index, row in metadata_test.iterrows():
                   if row['number_filtered_patches'] < 10:
                         discard_wsi_test.append(index)
+
 
             logging.info(f"There is {len(discard_wsi_test)} WSI discarded in test, <10 patches")
             logging.info(discard_wsi_test)
@@ -142,8 +146,23 @@ def main(experiment_name, dataset, version_patch_selection):
       test_csv.index = test_csv.index.str.replace("/", '-')
       test_csv.drop(discard_wsi_test, inplace=True)
 
-      test_dataset = test_csv.index
-      test_labels = test_csv.values
+      test_csv_rumc = pd.read_csv(Path(datadir / f"labels_test_rumc.csv"), index_col=0)
+
+      discard_rumc = []
+      if (metadata_rumc['number_filtered_patches'] < 10).any():
+            for index, row in metadata_rumc.iterrows():
+                  if row['number_filtered_patches'] < 10 and index in test_csv_rumc.index:
+                        discard_rumc.append(index)
+      test_csv_rumc.drop(discard_rumc, inplace=True)
+
+      test_dataset_rumc = test_csv_rumc.index
+      test_labels_rumc = test_csv_rumc.values
+
+      test_dataset_aoec = test_csv.index
+      test_labels_aoec = test_csv.values
+
+      test_dataset = np.append(test_dataset_aoec, test_dataset_rumc)
+      test_labels = np.concatenate([test_labels_aoec, test_labels_rumc])
 
       # Load Test patches
       if dataset == "test":
@@ -151,6 +170,11 @@ def main(experiment_name, dataset, version_patch_selection):
                   dataset_path = natsorted([i for i in testdir.rglob("*_densely_filtered_paths_v2.csv")])
             elif version_patch_selection == "v1":
                   dataset_path = natsorted([i for i in testdir.rglob("*_densely_filtered_paths.csv")])
+
+            dataset_path_rumc = natsorted([i for i in pyhistdir_rumc.rglob("*_densely_filtered_paths_v2.csv")])
+
+            dataset_path = dataset_path + dataset_path_rumc
+
             patches_test = {}
             for wsi_patches_path in tqdm(dataset_path, desc="Selecting patches: "):
 
@@ -160,6 +184,9 @@ def main(experiment_name, dataset, version_patch_selection):
                   patches_test[name] = csv_patch_path
 
             for discard_wsi in discard_wsi_test:
+                  patches_test.pop(discard_wsi, None)
+
+            for discard_wsi in discard_rumc:
                   patches_test.pop(discard_wsi, None)
 
             logging.info(f"Total number of WSI for test {len(patches_test)}")
@@ -225,15 +252,21 @@ def main(experiment_name, dataset, version_patch_selection):
       ])
 
       # Train and validation metrics from saved predictions
-      labels = pd.read_csv(datadir / "manual_labels.csv", index_col=0)
-      train_predictions_df = pd.read_csv(modeldir / f"training_predictions_{epoch+1}.csv", index_col="filenames")
+      labels_aoec = pd.read_csv(datadir / "labels.csv", index_col=0, dtype={"image_num": str})
+      labels_rumc = pd.read_csv(datadir / "labels_id_rumc.csv", index_col=0)
+      labels_rumc.drop(discard_rumc, inplace=True)
+      labels_rumc.drop("ID", axis=1, inplace=True)
+
+      labels = pd.concat([labels_aoec, labels_rumc])
+
+      train_predictions_df = pd.read_csv(modeldir / f"training_predictions_{epoch+1}.csv", index_col="filenames", dtype={'filenames': str})
       train_predictions_df.sort_index(inplace=True)
       train_predictions_df.drop(columns=train_predictions_df.columns[0], axis=1, inplace=True)
       train_predictions_df = train_predictions_df[~train_predictions_df.index.duplicated(keep='first')]
       train_pred_scores = train_predictions_df.values
       train_pred = np.where(train_pred_scores > 0.5, 1, 0)
 
-      valid_predictions_df = pd.read_csv(modeldir / f"validation_predictions_{epoch+1}.csv", index_col="filenames")
+      valid_predictions_df = pd.read_csv(modeldir / f"validation_predictions_{epoch+1}.csv", index_col="filenames", dtype={'filenames': str})
       valid_predictions_df.sort_index(inplace=True)
       valid_predictions_df.drop(columns=valid_predictions_df.columns[0], axis=1, inplace=True)
       valid_predictions_df = valid_predictions_df[~valid_predictions_df.index.duplicated(keep='first')]

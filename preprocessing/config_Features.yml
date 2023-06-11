@@ -1,6 +1,6 @@
-experiment_name: Features_convnext_v2_AChannel
+experiment_name: Features_resnet101_rumc
 model:
-    model_name: "convnext"
+    model_name: "resnet101"
     num_classes: 4
     freeze_weights: False
     num_frozen_layers: 0
@@ -21,6 +21,6 @@ dataloader:
 
 data_augmentation:
     boolean: False
-    featuresdir: Features_convnext_v2_AChannel
+    featuresdir: Features_resnet101_rumc
     prob: 0.5
 

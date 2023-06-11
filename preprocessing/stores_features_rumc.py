@@ -110,10 +110,20 @@ def main(config_file, exp_name_moco):
 	net.to(device)
 	net.eval()
 
-	pyhistdir = Path(datadir / "Mask_PyHIST_v2") 
+	pyhistdir = Path(datadir / "Mask_PyHIST") 
 
-	dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths_v2.csv") 
-                              if "LungAOEC" in str(i)])
+	dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths_v2.csv")])
+
+	metadata_test = pd.read_csv(pyhistdir / "metadata_slides_v2.csv", index_col=0)
+
+	discard_wsi_test = []
+	if (metadata_test['number_filtered_patches'] < 10).any():
+		for index, row in metadata_test.iterrows():
+				if row['number_filtered_patches'] < 10:
+					discard_wsi_test.append(index)
+
+		logging.info(f"There is {len(discard_wsi_test)} WSI discarded in test, <10 patches")
+		logging.info(discard_wsi_test)
 
 	patches_path = {}
 	for wsi_patches_path in tqdm(dataset_path, desc="Selecting patches: "):
@@ -123,8 +133,10 @@ def main(config_file, exp_name_moco):
 		name = wsi_patches_path.parent.stem
 		patches_path[name] = csv_patch_path
 
-	logging.info(f"Total number of WSI for train/validation {len(patches_path)}")
+	for discard_wsi in discard_wsi_test:
+		patches_path.pop(discard_wsi, None)
 
+	logging.info(f"Total number of WSI for train/validation {len(patches_path)}")
 
 	for wsi_id, path_for_patches in tqdm(patches_path.items()):
 
@@ -141,15 +153,12 @@ def main(config_file, exp_name_moco):
 			for instances in training_generator_instance:
 				instances = instances.to(device, non_blocking=True)
 
-				# forward + backward + optimize
 				feats = net.conv_layers(instances)
 				feats = feats.view(-1, net.fc_input_features)
 				feats_np = feats.cpu().data.numpy()
 
 				features = np.append(features,feats_np)
 
-				#del instances
-			#del instances
 		features_np = np.reshape(features, (n_elems, net.fc_input_features))
 
 		np.save(outputdir / f"{wsi_id}.npy", features_np)

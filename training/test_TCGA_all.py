@@ -25,6 +25,8 @@ thispath = Path(__file__).resolve()
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
+datadir = Path(thispath.parent.parent / "data")
+
 
 @click.command()
 @click.option(
@@ -37,7 +39,7 @@ def main(experiment_name):
 
       testdir = Path("/mnt/nas6/data/lung_tcga")
 
-      outputdir = Path(testdir / "test_metrics" / experiment_name)
+      outputdir = Path(testdir / "test_metrics_all" / experiment_name)
       Path(outputdir).mkdir(exist_ok=True, parents=True)
 
       modeldir = Path(thispath.parent.parent / "trained_models" / "MIL" / experiment_name)
@@ -85,9 +87,8 @@ def main(experiment_name):
       net.eval()
 
       # Discard WSI with less than 10 patches
-      pyhistdir = Path(testdir / "Mask_PyHIST")
-       
-      metadata_test = pd.read_csv(pyhistdir / "metadata_slides.csv", index_col=0)
+      pyhistdir = Path(testdir / "Mask_PyHIST_tif")
+      metadata_test = pd.read_csv(pyhistdir / "metadata_slides_v2.csv", index_col=0)
 
       discard_wsi_test = []
       if (metadata_test['number_filtered_patches'] < 10).any():
@@ -99,8 +100,7 @@ def main(experiment_name):
             logging.info(discard_wsi_test)
 
       # Load Test Dataset and Labels
-      test_csv = pd.read_csv(Path(testdir / f"labels_tcga.csv"), index_col=0)
-      test_csv.index = test_csv.index.str.replace("/", '-')
+      test_csv = pd.read_csv(Path(testdir / f"labels_tcga_all.csv"), index_col=0)
       test_csv.drop(discard_wsi_test, inplace=True)
 
       test_dataset = test_csv.index
@@ -114,7 +114,7 @@ def main(experiment_name):
 
             csv_patch_path = pd.read_csv(wsi_patches_path).to_numpy()
             
-            name = f"{wsi_patches_path.parent.stem}{wsi_patches_path.parent.suffixes[0]}"
+            name = f"{wsi_patches_path.parent.stem}"
             patches_test[name] = csv_patch_path
 
       for discard_wsi in discard_wsi_test:
@@ -150,7 +150,6 @@ def main(experiment_name):
 
       y_pred = []
       y_true = []
-      y_true_onehot = []
       scores_pred = []
       names = ["SCLC", "LUAD", "LUSC", "NL"]
 
@@ -169,31 +168,33 @@ def main(experiment_name):
                   wsi_id = wsi_id[0]
                   
                   labels_np = labels.cpu().numpy().flatten()
-                  label_onehot = np.argmax(labels_np)
 
-                  test_generator_instance = get_generator_instances(patches_test[wsi_id], 
-                                                                  preprocess,
-                                                                  cfg.dataloader.batch_size, 
-                                                                  None,
-                                                                  cfg.dataloader.num_workers) 
+                  # test_generator_instance = get_generator_instances(patches_test[wsi_id], 
+                  #                                                 preprocess,
+                  #                                                 cfg.dataloader.batch_size, 
+                  #                                                 None,
+                  #                                                 cfg.dataloader.num_workers) 
 
-                  n_elems = len(patches_test[wsi_id])   
+                  # n_elems = len(patches_test[wsi_id])   
 
-                  features = []
+                  # features = []
                   
-                  for instances in test_generator_instance:
-                        instances = instances.to(device, non_blocking=True)
+                  # for instances in test_generator_instance:
+                  #       instances = instances.to(device, non_blocking=True)
 
-                        # forward + backward + optimize
-                        feats = net.conv_layers(instances)
-                        feats = feats.view(-1, net.fc_input_features)
-                        feats_np = feats.cpu().data.numpy()
+                  #       # forward + backward + optimize
+                  #       feats = net.conv_layers(instances)
+                  #       feats = feats.view(-1, net.fc_input_features)
+                  #       feats_np = feats.cpu().data.numpy()
 
-                        features.extend(feats_np)
+                  #       features.extend(feats_np)
 
-                              #del instances
-                        #del instances
-                  features_np = np.reshape(features,(n_elems, net.fc_input_features))
+                  #             #del instances
+                  #       #del instances
+                  # features_np = np.reshape(features,(n_elems, net.fc_input_features))
+
+                  features_np = np.load(datadir / "Saved_features/tcga" /  
+                                        cfg.data_augmentation.featuresdir / f"{wsi_id}.npy")
 
                   inputs = torch.tensor(features_np).float().to(device, non_blocking=True)
                   
@@ -214,16 +215,16 @@ def main(experiment_name):
                   label = np.argmax(outputs_wsi_np_img)
                   output_norm = np.array([0, 0, 0, 0])
                   output_norm[label] = 1
+
                   logging.info(f"pred_img: {output_norm}")
                   logging.info(f"y_true: {labels_np}")
 
                   y_pred = np.append(y_pred, output_norm)
                   y_true = np.append(y_true, labels_np)
-                  y_true_onehot = np.append(y_true_onehot, label_onehot)
                   scores_pred= np.append(scores_pred, outputs_wsi_np_img)
                   
                   micro_accuracy_test = accuracy_score(y_true, y_pred)
-                  logging.info(f"Accuracy test TGCA {micro_accuracy_test}") 
+                  logging.info(f"Accuracy test TCGA {micro_accuracy_test}") 
 
             File = {'filenames': filenames_wsis,
             'pred_scc': pred_scc, 

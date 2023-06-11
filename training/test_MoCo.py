@@ -152,7 +152,7 @@ def main(experiment_name):
         sns.heatmap(df_matrix, vmin=0, vmax=1)
         plt.suptitle("Cosine Similariry")
         plt.title(wsi) 
-        plt.savefig(csvdir / f"{experiment_name}_{wsi}_similarity.svg")
+        plt.savefig(csvdir / f"{experiment_name}_{wsi}_similarity.png")
         plt.clf()
 
     feature_matrix = feature_matrix.reshape(len(labels), moco_dim)

@@ -48,7 +48,7 @@ def main(config_file, exp_name_moco):
 	cfg = yaml_load(configdir)
 
 	# Create directory to save the resuls
-	outputdir = Path(datadir / "Saved_features" / cfg.experiment_name)
+	outputdir = Path(datadir / "Saved_features" / "tcga" / cfg.experiment_name)
 	Path(outputdir).mkdir(exist_ok=True, parents=True)
 
 	# Save config parameters for experiment
@@ -105,15 +105,14 @@ def main(config_file, exp_name_moco):
 
 	hidden_space_len = cfg.model.hidden_space_len
 
-	net = MIL_model(model, hidden_space_len)
-	net.load_state_dict(checkpoint_moco["encoder_state_dict"], strict=False)
+	net = MIL_model(model, hidden_space_len, cfg)
+	# net.load_state_dict(checkpoint_moco["encoder_state_dict"], strict=False)
 	net.to(device)
 	net.eval()
 
-	pyhistdir = Path(datadir / "Mask_PyHIST_v2") 
+	pyhistdir = Path("/mnt/nas6/data/lung_tcga/Mask_PyHIST_tif") 
 
-	dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv") 
-                              if "LungAOEC" in str(i)])
+	dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
 
 	patches_path = {}
 	for wsi_patches_path in tqdm(dataset_path, desc="Selecting patches: "):

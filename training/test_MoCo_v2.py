@@ -8,9 +8,7 @@ from training import Encoder, ModelOption, yaml_load, cosine_similarity
 from database import Dataset_instance
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from itertools import combinations
 import matplotlib.pyplot as plt
-import seaborn as sns
 from sklearn.decomposition import PCA
 import seaborn as sns
 import umap
@@ -31,8 +29,20 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     prompt="Name of the MoCo experiment name to compute similarity metrics",
     help="Name of the MoCo experiment name to compute similarity metrics",
 )
-def main(experiment_name):
+@click.option(
+    "--version_patch_similarity",
+    default="v1",
+    prompt="Version for the patch similarity selection 'v1' or 'v2'",
+    help="Version for the patch similarity selection 'v1' or 'v2'",
+)
+def main(experiment_name, version_patch_similarity):
 # Load PyTorch model
+
+    seed = 33
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
 
     modeldir = Path(thispath.parent.parent / "trained_models" / "MoCo" / experiment_name)
 
@@ -51,7 +61,6 @@ def main(experiment_name):
 
     encoder = Encoder(model, dim=moco_dim).to(device)
 
-    # checkpoint = torch.load(modeldir / cfg.dataset.magnification / cfg.model.model_name / f"{experiment_name}.pt")
     checkpoint = torch.load(modeldir / cfg.dataset.magnification / cfg.model.model_name / f"{experiment_name}.pt")
     encoder.load_state_dict(checkpoint["encoder_state_dict"])
     loss = checkpoint["loss"]
@@ -62,17 +71,31 @@ def main(experiment_name):
     # Load patches
     pyhistdir = Path(datadir / "Mask_PyHIST_v2")
 
-    similaridir = Path(thispath.parent.parent / "csv_patch_similarity" / "patch_similarity_images")
+    if version_patch_similarity == "v1":
+        similaridir = Path(thispath.parent.parent / "patch_similarity" / "patch_similarity_images")
 
-    dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")])
+    elif version_patch_similarity == "v2":
+        similaridir = Path(thispath.parent.parent / "patch_similarity" / "patch_similarity_images_v2")
+    else:
+        print("Error: wrong version selected")
+
+    dataset_path = natsorted([i for i in pyhistdir.rglob("*_densely_filtered_paths.csv")
+                              if "000030303300314205" in str(i)
+                              or "000030494900323685" in str(i)
+                              or "000030689500332896" in str(i)
+                              or "000030734200335036" in str(i)
+                              or "000030734200335038" in str(i)
+                              or "000030734600335056" in str(i)
+                              or "000033382400482121" in str(i)
+                              or "000030689200333236" in str(i)
+                              or "000030769200337772" in str(i)
+                              or "000030961000347399" in str(i)
+                              or "000031634700383219" in str(i)
+                              or "000030737800334725" in str(i)
+                              or "000031634700383219" in str(i)])
 
     selected_patches = natsorted([e for e in similaridir.rglob("*.png")])
-    #  = []
-    # for dir in subdirs:
-    #     listdir = [i.stem for i in dir.iterdir()]
-    #     selected_patches.extend(listdir)
-    # selected_patches.sort()
-    print(selected_patches)
+
     cells = []
     glands = []
     stroma = []
@@ -83,7 +106,6 @@ def main(experiment_name):
             glands.append(patch.stem)
         elif patch.parent.stem == "stroma":
             stroma.append(patch.stem)
-    print(cells)
 
     path_patches = []
     for wsi_patches in tqdm(dataset_path, desc="Selecting patches to check model"):
@@ -104,7 +126,6 @@ def main(experiment_name):
                     'pin_memory': False,
                     'num_workers': 2}
 
-    feature_matrix = []
     selected_patches_path = []
     labels = []
     for wsi in tqdm(path_patches):
@@ -120,8 +141,7 @@ def main(experiment_name):
             selected_patches_path.append(wsi)
             label = "stroma"
             labels = np.append(labels, label)
-    print(labels)
-    print(labels.shape)
+
     selected_patches_path.sort()
     # print(selected_patches_path)
     instances = Dataset_instance(selected_patches_path, transform=None, preprocess=preprocess)
@@ -129,6 +149,7 @@ def main(experiment_name):
 
     encoder.eval()
     feature_dict = {}
+    feature_matrix = []
     with torch.no_grad():
         for i, (x_q, x_k) in enumerate(generator):
 
@@ -136,28 +157,10 @@ def main(experiment_name):
             q = encoder(x_q)
             q = q.squeeze().cpu().numpy()
 
-            feature_dict[selected_patches[i]] = q
+            feature_dict[Path(str(selected_patches_path[i])).stem] = q
             feature_matrix = np.append(feature_matrix, q)
 
-    df_matrix = pd.DataFrame(index=selected_patches, columns=selected_patches)
-    combine_names = list(combinations(feature_dict, 2))
-    combine_patches = list(combinations(feature_dict.values(), 2))
-
-    for name, patch in zip(combine_names, combine_patches):
-        # print(f"Similarity between {name[0]} and {name[1]}")
-        similarity = cosine_similarity(patch[0], patch[1])
-        df_matrix.loc[name[0], name[1]] = similarity
-        df_matrix.loc[name[1], name[0]] = similarity
-        # print(f"Cosine Similarity: {similarity}")
-    
-    df_matrix.fillna(1, inplace=True)
-
-    sns.heatmap(df_matrix, vmin=0, vmax=1)
-    plt.suptitle("Cosine Similariry")
-    plt.title(wsi) 
-    plt.savefig(similaridir / f"{experiment_name}_similarity_v2.svg")
-    plt.clf()
-
+    # uMap
     feature_matrix = feature_matrix.reshape(len(selected_patches_path), moco_dim)
     pca = PCA(n_components=20)
     pca_features = pca.fit_transform(feature_matrix)
@@ -175,9 +178,8 @@ def main(experiment_name):
     # plt.savefig(datadir / "scaterplot_similarity.png")
     plt.figure()
     mapper = umap.UMAP().fit(pca_features)
-    umap.plot.points(mapper, labels=labels)
-    plt.savefig(similaridir / f"{experiment_name}_uMap_similarity_v2.png")
-
+    umap.plot.points(mapper, labels=labels, theme='red')
+    plt.savefig(similaridir / f"{experiment_name}_uMap_similarity_v2.svg")
 
 if __name__ == '__main__':
     main()
