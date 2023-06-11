@@ -1,6 +1,6 @@
 data_augmentation:
   boolean: false
-  featuresdir: Features_resnet34_ImageNet_NoChannel_v2
+  featuresdir: Features_resnet101_rumc_NoChannel
   prob: 0.5
 dataloader:
   batch_size: 512
@@ -16,13 +16,13 @@ dataset:
   - 0.229
   - 0.224
   - 0.225
-experiment_name: f_MIL_res34rumc1_ImageNet_cosine_v3_v2Feat
+experiment_name: f_MIL_resnet101_rumc
 model:
   dropout: 0.2
   embedding_bool: true
   freeze_weights: false
   hidden_space_len: 128
-  model_name: resnet34
+  model_name: resnet101
   num_classes: 4
   num_frozen_layers: 0
   pool_algorithm: attention
@@ -51,10 +51,8 @@ training:
     momentum: 0.9
     weight_decay: 0.0001
   resume_training: false
-  temperature: 0.07
 wandb:
   enable: true
   group: MIL_best
   project: histo_lung
   username: lluisb3
-

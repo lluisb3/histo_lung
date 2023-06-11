@@ -73,20 +73,21 @@ def edict2dict(edict_obj):
 def initialize_wandb(
     cfg,
     outputdir,
-    tags: Optional[List] = None,
+    iterator_fold = None
 ):
     outputdir = Path(outputdir / "wandb")
     Path(outputdir).mkdir(exist_ok=True, parents=True)
-    if tags == None:
-        tags = []
+    if iterator_fold == None:
+        name=cfg.experiment_name
+    else:
+        name=f"{cfg.experiment_name}_{iterator_fold}"    
     run = wandb.init(
         project=cfg.wandb.project,
         entity=cfg.wandb.username,
-        name=cfg.experiment_name,
+        name=name,
         group=cfg.wandb.group,
         dir= outputdir,
         config=cfg,
-        tags=tags,
     )
     return run 
 
