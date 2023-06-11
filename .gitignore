@@ -9,6 +9,7 @@ CLAM
 bash_files/*
 trained_models/*
 patch_similarity/*
+jupyter_notebooks/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
