@@ -1,6 +1,6 @@
 data_augmentation:
   boolean: false
-  featuresdir: Features_resnet101_rumc_NoChannel
+  featuresdir: Features_resnet34_v2_NoChannel
   prob: 0.5
 dataloader:
   batch_size: 512
@@ -16,13 +16,13 @@ dataset:
   - 0.229
   - 0.224
   - 0.225
-experiment_name: f_MIL_resnet101_rumc
+experiment_name: f_MIL_res34v2_v2_rumc_best_cosine_v3_tryNew
 model:
   dropout: 0.2
   embedding_bool: true
   freeze_weights: false
   hidden_space_len: 128
-  model_name: resnet101
+  model_name: resnet34
   num_classes: 4
   num_frozen_layers: 0
   pool_algorithm: attention

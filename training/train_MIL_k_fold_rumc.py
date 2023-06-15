@@ -1026,7 +1026,7 @@ def main(config_file, exp_name_moco):
 
         net = MIL_model(model, hidden_space_len, cfg)
 
-        # net.load_state_dict(checkpoint_moco["encoder_state_dict"], strict=False)
+        net.load_state_dict(checkpoint_moco["encoder_state_dict"], strict=False)
         net.to(device)
         net.eval()
 
