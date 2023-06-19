@@ -2,10 +2,7 @@
 data/*
 trash.py
 scripts_niccolo
-HistoQC
-csv_files_extra
 PyHIST
-CLAM
 bash_files/*
 trained_models/*
 patch_similarity/*

@@ -1,6 +1,6 @@
-experiment_name: MoCo_resnet101_rumcAOEC
+experiment_name: MoCo_resnet34
 model:
-    model_name: "resnet101"
+    model_name: "resnet34"
     num_classes: 4
     freeze_weights: False
     num_freezed_layers: 0

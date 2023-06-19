@@ -1,6 +1,6 @@
-experiment_name: f_MIL_res101v2_v2_rumc
+experiment_name: f_MIL_resnet34
 model:
-    model_name: "resnet101"
+    model_name: "resnet34"
     num_classes: 4
     freeze_weights: False
     num_frozen_layers: 0
@@ -21,7 +21,7 @@ dataloader:
 
 data_augmentation:
     boolean: False
-    featuresdir: Features_resnet101_v2_NoChannel
+    featuresdir: Features_resnet34_v2_NoChannel
     prob: 0.5
 
 training:
