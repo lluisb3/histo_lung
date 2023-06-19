@@ -99,11 +99,22 @@ the model are selected by using the config file `training/config.yml`
 python3 -m training.train_MoCo
 ```
 
+### UMAPs
+UMAP is computed on the train MoCo to understand the clustering capabilities of the model. The idea
+is to perform a UMAP dimensionality reduction of the 128 feature vector that MoCo outputs. 
+```
+python3 -m training.test_MoCo_umap
+```
+In the following figures is possible to compare the clustering capabilities of the ResNet34
+pre-trained with MoCo versus the ResNet34 pre-trained on ImageNet.
+| UMAP MoCo           | UMAP ImageNet              |
+| :----------------------: | :----------------------: |
+| ![MoCo](figures/MoCo_resnet34_v2_uMap_similarity_v2.png)| ![ImageNet](figures/ImageNet_uMap_similarity_v2.png)  |
 ## Multiple Instance Learning
 Multiple Instance Learning is used as a weak-supervised learning strategy because in this work we
-only use global annotaions for the WSis. Before performing the training is necesarry to exatract
-the features of all the patches using the feature extrcator pre-trained using MoCo. All the inputs
- necessary to extrcat the features are selected by using the config file 
+only use global annotaions for the WSis. Before performing the training is necessary to extract
+the 128-feature vectors of all the patches using the feature extrcator pre-trained using MoCo. All
+ the inputs necessary to extrcat the features are selected by using the config file 
  `preprocessing/config_Features.yml`.
 ```
 python3 -m preprocessing.store_features
