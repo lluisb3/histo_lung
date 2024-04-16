@@ -33,7 +33,7 @@ gitdb==4.0.10
 GitPython==3.1.41
 holoviews==1.15.4
 huggingface-hub==0.13.3
-idna==3.4
+idna==3.7
 imageio==2.26.0
 importlib-metadata==6.5.0
 importlib-resources==5.12.0
