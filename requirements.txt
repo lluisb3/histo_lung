@@ -110,7 +110,7 @@ PyYAML==6.0
 pyzmq==19.0.2
 qudida==0.0.4
 regex==2023.3.23
-requests==2.31.0
+requests==2.32.0
 scikit-image==0.20.0
 scikit-learn==1.2.1
 scipy==1.11.1
