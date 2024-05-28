@@ -21,20 +21,6 @@ import click
 
 thispath = Path(__file__).resolve()
 
-tcgadir = Path("/mnt/nas6/data/lung_tcga/data/data")
-
-datadir = Path(thispath.parent.parent / "data")
-
-patchdir = Path(datadir / "tcga")
-
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-# Seed for reproducibility
-seed = 33
-torch.manual_seed(seed)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(seed)
-np.random.seed(seed)
 
 def smooth_heatmap(heatmap, sigma):
     
@@ -110,11 +96,11 @@ class MIL_model(torch.nn.Module):
             )
             
             if "NoChannel" in self.cfg.data_augmentation.featuresdir:
-                print("== Attention No Channel ==")
+                # print("== Attention No Channel ==")
                 self.embedding_before_fc = torch.nn.Linear(self.E * self.K, self.E)
 
             elif "AChannel" in self.cfg.data_augmentation.featuresdir:
-                print("== Attention with A Channel for multilabel ==")
+                # print("== Attention with A Channel for multilabel ==")
                 self.attention_channel = torch.nn.Sequential(torch.nn.Linear(self.L, self.D),
                                                     torch.nn.Tanh(),
                                                     torch.nn.Linear(self.D, 1))
@@ -166,13 +152,13 @@ class MIL_model(torch.nn.Module):
         wsi_embedding = torch.mm(A, features_to_return)
 
         if "NoChannel" in self.cfg.data_augmentation.featuresdir:
-            print("== Attention No Channel ==")
+            # print("== Attention No Channel ==")
             wsi_embedding = wsi_embedding.view(-1, self.E * self.K)
 
             cls_img = self.embedding_before_fc(wsi_embedding)
 
         elif "AChannel" in self.cfg.data_augmentation.featuresdir:
-            print("== Attention with A Channel for multilabel ==")
+            # print("== Attention with A Channel for multilabel ==")
             attention_channel = self.attention_channel(wsi_embedding)
 
             attention_channel = torch.transpose(attention_channel, 1, 0)
@@ -193,68 +179,95 @@ class MIL_model(torch.nn.Module):
 
         return Y_prob, A
     
+    
+experiment_name = "f_MIL_res34v2_v2_rumc_best_cosine_v3_fold_0"
+downsample_factor = 4
+
+
 experiment_name = "f_MIL_res34v2_v2_rumc_best_cosine_v3_fold_0"
 downsample_factor = 4
 
 
 @click.command()
 @click.option(
-    "--fold",
-    default="fold_0",
-    prompt="Name of the MIL experiment name to compute heatmap",
-    help="Name of the MIL experiment name to compute heatmap",
+    "--wsi_name",
+    default="TCGA-18-3417-01Z-00-DX1.tif",
+    prompt="Name of the WSI to perform study",
+    help="Name of the WSI to perform study",
 )
 @click.option(
-    "--wsi_name",
-    default="TCGA-18-3417-01Z-00-DX1",
-    prompt="Position in the select_wsi available WSI options",
-    help="Position in the select_wsi available WSI options",
+    "--sigma",
+    default=8,
+    prompt="Value of sigma applied to the gaussian filter",
+    help="Value of sigma applied to the gaussian filter",
 )
-def main(fold, wsi_name):
+def main(wsi_name, sigma):
 
-    list_wsi = natsorted([f.name for f in Path(patchdir).iterdir() if f.is_dir()], key=str)
+    datadir = Path(thispath.parent.parent / "data" / "tcga")
+    tcgadir = Path(Path(datadir) / "wsi")
+    patchdir = Path(Path(datadir) / "patches")
+    maskdir = Path(Path(datadir) / "mask")
 
-    list_wsi = [s[:-4] for s in list_wsi]
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
 
-    if wsi_name in list_wsi:
-        wsi_id = list_wsi.index(wsi_name)
-        print(f"The index of '{wsi_name}' is: {wsi_id}")
-    else:
-        print(f"'{wsi_name}' is not in the list.")
+    # Seed for reproducibility
+    seed = 33
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
 
-    labels_df = pd.read_csv(f"{patchdir}/labels_tcga_all.csv", index_col=0)
+    # list_wsi = natsorted([f.name for f in Path(patchdir).iterdir() if f.is_dir()], key=str)
 
-    selected_columns = ['cancer_nscc_adeno', 'cancer_nscc_squamous']
-    filtered_df = labels_df.loc[list_wsi, selected_columns]
+    # list_wsi = [s[:-4] for s in list_wsi]
+
+    # if wsi_name in list_wsi:
+    #     wsi_id = list_wsi.index(wsi_name)
+    #     print(f"The index of '{wsi_name}' is: {wsi_id}")
+    # else:
+    #     print(f"'{wsi_name}' is not in the list.")
+
+    labels_df = pd.read_csv(f"{datadir}/labels_tcga_all.csv", index_col=0)
+
+    # selected_columns = ['cancer_nscc_adeno', 'cancer_nscc_squamous']
+    # filtered_df = labels_df.loc[wsi_name, selected_columns]
 
     # Create the list of tuples
-    select_wsi = []
+    # select_wsi = []
 
-    for index, row in filtered_df.iterrows():
-        if row['cancer_nscc_adeno'] == 1:
-            select_wsi.append((index, 1))
-        elif row['cancer_nscc_squamous'] == 1:
-            select_wsi.append((index, 2))
+    # for index, row in filtered_df.iterrows():
+    #     if row['cancer_nscc_adeno'] == 1:
+    #         select_wsi.append((index, "LUAD"))
+    #     elif row['cancer_nscc_squamous'] == 1:
+    #         select_wsi.append((index, "LUSC"))
 
-    patient = select_wsi[wsi_id]
-    print(f"Heatmap for patient: {patient}")
+    for index, row in labels_df.iterrows():
+        if index == wsi_name[:-4]:
+            if row['cancer_nscc_adeno'] == 1:
+                groundtruth = "LUAD"
+            elif row['cancer_nscc_squamous'] == 1:
+                groundtruth = "LUSC"
 
-    tif_dir = natsorted([i for i in tcgadir.rglob("*.tif")], key=str)
+    # sample = select_wsi[0]
+    print(f"Heatmap for sample: {wsi_name} with Groundtruth label: {groundtruth}")
+
+    # tif_dir = natsorted([i for i in tcgadir.rglob("*.tif")], key=str)
+    # print(tif_dir)
     
-    class_lung = patient[1]
-    for dir in tif_dir:
-        if patient[0] in str(dir):
-                file_path = dir
-                print(f"Loaded WSI from {file_path}")
-                break
+    # for dir in tif_dir:
+        # if sample[0] in str(dir):
+        #         file_path = dir
+        #         print(f"Loaded WSI from {file_path}")
+        #         break
 
-    modeldir = Path(thispath.parent.parent / "trained_models" / "MIL" / "best" / "best" / "f_MIL_res34v2_v2_rumc_best_cosine_v3")
+    modeldir = Path(thispath.parent.parent / "trained_models" / "MIL" / "f_MIL_res34v2_v2_rumc_best_cosine_v3")
 
     cfg = yaml_load(modeldir / f"config_f_MIL_res34v2_v2_rumc_best_cosine_v3.yml")
 
-    checkpoint = torch.load(modeldir / fold / "checkpoint.pt")
+    checkpoint = torch.load(modeldir / "fold_0" / "checkpoint.pt")
 
-    print(f"Loaded {experiment_name} using {cfg.model.model_name} as backbone")
+    print(f"Loaded Model using {cfg.model.model_name} as backbone")
           
     model = ModelOption(cfg.model.model_name,
                     cfg.model.num_classes,
@@ -280,17 +293,13 @@ def main(fold, wsi_name):
                 antialias=True)
         ])
     
-    file = openslide.open_slide(file_path)
+    file = openslide.open_slide(f"{tcgadir}/{wsi_name}")
     # mpp = file.properties['openslide.mpp-x']
 
     # level_downsamples = file.level_downsamples
     # mags = available_magnifications(mpp, level_downsamples)
 
-    maskdir = Path(tcgadir.parent / "masks" / f"{patient[0]}.tif")
-
-    patientdir = Path(patchdir / f"{patient[0]}.tif")
-
-    mask = cv.imread(str(maskdir / f"{patient[0]}.tif_mask_use.png"))
+    mask = cv.imread(str(maskdir / f"{wsi_name}" / f"{wsi_name}_mask_use.png"))
     mask = cv.cvtColor(mask, cv.COLOR_BGR2RGB)
 
     print(f"Mask shape: {mask.shape}")
@@ -298,23 +307,17 @@ def main(fold, wsi_name):
     # mask_np = cv.resize(mask, (int(mask.shape[1]/downsample_factor), int(mask.shape[0]/downsample_factor)))
 
     thumb = file.get_thumbnail((mask.shape[1], mask.shape[0]))
-    thumb_np = np.asarray(thumb)
 
     mask_empty = np.zeros((mask.shape[0], mask.shape[1]))
-
-    print(f"Empty mask shape: {mask_empty.shape}")
-
-    metadata_preds = pd.read_csv(patientdir / f"{patient[0]}.tif_coords_densely.csv", header=None)
-
-    patches = pd.read_csv(patientdir / f"{patient[0]}.tif_paths_densely.csv", header=None).values
+    
+    sampledir = Path(patchdir / f"{wsi_name}")
+    metadata_preds = pd.read_csv(sampledir / f"{wsi_name}_coords_densely.csv", header=None)
+    # patches = pd.read_csv(sampledir / f"{sample[0]}.tif_paths_densely.csv", header=None).values
+    patches = natsorted([[str(i)] for i in sampledir.rglob("*.png")], key=str)
 
     names = metadata_preds.iloc[:, 0]
     coords_x = metadata_preds.iloc[:, 3].values
     coords_y = metadata_preds.iloc[:, 2].values
-
-    downsample_factor = 32
-
-    n_elems = len(patches)
 
     #params generator instances
     batch_size_instance = 1
@@ -327,6 +330,8 @@ def main(fold, wsi_name):
     instances = Dataset_instance_MIL(patches, preprocess=preprocess)
     validation_generator_instance = DataLoader(instances, **params_instance)
 
+    downsample_factor = 32
+    n_elems = len(patches)
     dicts = []
     features = [] 
     with torch.no_grad():
@@ -364,43 +369,56 @@ def main(fold, wsi_name):
     #attention_weights = torch.transpose(attention_weights, 1, 0)
 
     pred_wsi = pred_wsi.cpu().data.numpy()
-    print(pred_wsi)
+    print("SCLC    LUAD     LUSC     Normal")
+    print(f"Prediction score: {pred_wsi}")
 
-    attentions_np = attention_weights.cpu().data.numpy()
-
+    final_prediction_id = pred_wsi.argmax()
     my_cmap_red = sns.color_palette("Reds", 255, as_cmap=True)
     my_cmap_green = sns.color_palette("Greens", 255, as_cmap=True)
     my_cmap_yellow = sns.color_palette("YlOrBr", 255, as_cmap=True)
     my_cmap_blue = sns.color_palette("Blues", 255, as_cmap=True)
-    my_cmap_black = sns.color_palette("coolwarm", 255, as_cmap=True)
 
-    outputir = Path(datadir / "Heatmaps")
-    Path(outputir).mkdir(exist_ok=True, parents=True)
-        
-        #filename_save_mask = '/home/niccolo/ExamodePipeline/Multiple_Instance_Learning/Colon/images/heat_map_'+wsi+'_binary_ss_'+MAGNIFICATION+'.png'        
-
-    if (class_lung==0):
-        type_tissue = 'sclc'
-        my_cmap = my_cmap_red
-    elif (class_lung==1):
-        type_tissue = 'luad'
-        my_cmap = my_cmap_green
-    elif (class_lung==2):
-        type_tissue = 'lusc'
+    if final_prediction_id == 0:
+        final_prediction = "SCLC"
         my_cmap = my_cmap_yellow
-    elif (class_lung==3):
-        type_tissue = 'normal'
-        my_cmap = my_cmap_blue
-        
 
+    elif final_prediction_id == 1:
+        final_prediction = "LUAD"
+        my_cmap = my_cmap_green
+
+    elif final_prediction_id == 2:
+        final_prediction = "LUSC"
+        my_cmap = my_cmap_red
+
+    elif final_prediction_id == 3:
+        final_prediction = "Normal"
+        my_cmap = my_cmap_blue
+    
+    outputdir = Path(datadir.parent / "outputs")
+    Path(outputdir).mkdir(exist_ok=True, parents=True)
+
+    File = {'filename': [wsi_name],
+            'prediction': [final_prediction], 
+            'groundtruth': [groundtruth]}
+
+    df_prediction = pd.DataFrame.from_dict(File)
+                  
+    filename_prediction = Path(outputdir / "predictions.csv")
+    df_prediction.to_csv(filename_prediction) 
+    
+    print(f"=== Final prediction of the model: {final_prediction} ===")
+    print(f"=== Groundtruth: {groundtruth} ===")
+
+
+    attentions_np = attention_weights.cpu().data.numpy()
 
     for i in range(attentions_np.shape[1]):
         #dicts[i]["prob"]=(outputs_np[i][class_colon]*attention_weights[i][class_colon])
-        dicts[i]["prob"] = attentions_np[class_lung, i]
+        dicts[i]["prob"] = attentions_np[final_prediction_id, i]
 
         #filename_save_mask = '/home/niccolo/ExamodePipeline/Multiple_Instance_Learning/Colon/images/heat_map_'+wsi+'_'+type_tissue+'_ss_'+MAGNIFICATION+'.png'        
 
-        
+
     torch.cuda.empty_cache()
 
     pixel_size = int(224/(downsample_factor))
@@ -417,20 +435,14 @@ def main(fold, wsi_name):
 
     mask_copy = mask_empty
 
-    heatmap_np = np.uint8(mask_copy*255)
+    heatmap_np = np.uint8(mask_copy*600)
 
-
-    sigma = 12
     heatmap_smooth_np = smooth_heatmap(heatmap_np, sigma)
-    print(np.max(heatmap_smooth_np))
-    print(heatmap_smooth_np.shape)
     # heatmap_smooth_np[heatmap_smooth_np < 0.000002] = 0
 
 
     Fi = pylab.gcf()
     DefaultSize = Fi.get_size_inches()
-
-    print(thumb_np.shape)
 
     fig = plt.gcf()
     DPI = fig.get_dpi()
@@ -438,10 +450,10 @@ def main(fold, wsi_name):
 
     plt.clf()
     plt.imshow(thumb)
-    plt.imshow(15*heatmap_smooth_np, alpha=0.5, cmap=my_cmap)
-    plt.savefig(outputir / f"heatmap_{patient[0]}_{fold}")
+    plt.imshow(15*heatmap_smooth_np, alpha=0.7, cmap=my_cmap)
+    plt.savefig(outputdir / f"heatmap_{wsi_name[:-4]}.png")
 
-    print(f"Heatmap saved on {outputir}")
+    print(f"Heatmap saved on {outputdir}")
 
 
 if __name__ == '__main__':

@@ -1,0 +1,22 @@
+# Docker compose to run the docker image lluisb3/mask3d (non-root image)#
+# Create image running docker-build-script.sh to create user with same ID as hosr user #
+# IMPORTANT to create directories in volumes on the host machine with user ownership before running #
+
+services:
+  hlung:
+    image: lluisb3/hlung:${TAG}
+    volumes:
+      - ${INPUT_PATH_WSI}:/home/user/app/data/tcga/wsi/TCGA-18-3417-01Z-00-DX1.tif
+      - ${INPUT_PATH_PATCHES}:/home/user/app/data/tcga/patches/TCGA-18-3417-01Z-00-DX1.tif
+      - ${INPUT_PATH_MASK}:/home/user/app/data/tcga/mask/TCGA-18-3417-01Z-00-DX1.tif
+      - ${OUTPUT_PATH}:/home/user/app/data/outputs
+    container_name: hlung
+    deploy:
+     resources:
+       reservations:
+         devices:
+           - driver: nvidia
+            #  count: 1
+             device_ids: ["${GPU_DEVICE_IDS}"]
+             capabilities: [gpu]
+    entrypoint: ["python3", "-u", "-m", "heatmaps.heatmaps", "--wsi_name", "$WSI_NAME", "--sigma", "$SIGMA"]
