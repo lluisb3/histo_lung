@@ -23,7 +23,8 @@ RUN apt-get update && \
 USER user
 
 # Install Python and git
-RUN sudo apt-get install -y python3.9 python3.9-dev python3-pip git-all openslide-tools
+RUN sudo apt-get update && \ 
+    sudo apt-get install -y python3.9 python3.9-dev python3-pip git-all openslide-tools
 
 ENV PATH=/home/user/.local/bin:$PATH
 
